@@ -67,12 +67,10 @@ jobs:
 
       - name: Set Custom Kernel Version & Host
         run: |
-          # Hapus CONFIG_LOCALVERSION lama jika ada, lalu pasang nama Anda
           sed -i '/CONFIG_LOCALVERSION=/d' arch/arm64/configs/lineageos_a37f_defconfig
           echo 'CONFIG_LOCALVERSION="-Sanditiana26"' >> arch/arm64/configs/lineageos_a37f_defconfig
-          # Ubah nama builder (user@host) di informasi versi kernel
           export KBUILD_BUILD_USER="sanditiana26"
-          export KBUILD_BUILD_HOST="github-actions"
+          export KBUILD_BUILD_HOST="github"
 
           
       - name: Fix SIM 2 Dual-SIM No Signal Bug
@@ -92,7 +90,7 @@ jobs:
         run: |
           mkdir -p $HOME/android/TOOLS/GCC
           git clone --depth=1 https://github.com/KudProject/aarch64-linux-android-4.9 $HOME/android/TOOLS/GCC/los-4.9-64
-          git clone --depth=1 https://github.com/KudProject/arm-linux-android-4.9 $HOME/android/TOOLS/GCC/los-4.9-32
+          git clone --depth=1 -b lineage-17.1 https://github.com/ $HOME/android/TOOLS/GCC/los-4.9-32
 
       - name: Run build.sh
         env:
