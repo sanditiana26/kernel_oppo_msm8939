@@ -26,13 +26,19 @@ make    O=out \
         CONFIG_DEBUG_SECTION_MISMATCH=y \
         -j$(nproc --all) || exit
 
-cp out/arch/arm64/boot/Image anykernel3
+if [ -f "out/arch/arm64/boot/Image.gz-dtb" ]; then
+  cp out/arch/arm64/boot/Image.gz-dtb anykernel3/
+elif [ -f "out/arch/arm64/boot/Image.gz" ]; then
+  cp out/arch/arm64/boot/Image.gz anykernel3/
+else
+  cp out/arch/arm64/boot/Image anykernel3/
+fi
 
-cc anykernel3/dtbtool.c -o out/arch/arm64/boot/dts/dtbtool
-( cd out/arch/arm64/boot/dts; ./dtbtool -v -s 2048 -o dt.img )
-( cp out/arch/arm64/boot/dts/dt.img anykernel3 )
+if [ -f "out/arch/arm64/boot/dt.img" ]; then
+  cp out/arch/arm64/boot/dt.img anykernel3/
+fi
 
-( cd anykernel3; zip -r ../out/A37F_KERNEL_ASU`date +%d\.%m\.%Y.zip -x 'LICENSE' 'README.md' 'dtbtool.c' )
+( cd anykernel3; zip -r ../out/A37F_KERNEL_ASU_$(date +%d.%m.%Y).zip * -x 'LICENSE' 'README.md' 'dtbtool.c' )
 
 BUILD_END=$(date +"%s")
 DIFF=$(($BUILD_END - $BUILD_START))
