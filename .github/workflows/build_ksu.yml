@@ -21,8 +21,6 @@ jobs:
 
       - name: Apply KernelSU Manual Hooks (3.10)
         run: |
-          # Patch otomatis ke fs/exec.c, fs/open.c, fs/read_write.c, fs/stat.c, dan drivers/input/input.c
-          curl -LSs "https://githubusercontent.com" > /dev/null
           python3 -c '
           import re
 
@@ -67,13 +65,25 @@ jobs:
               with open("drivers/input/input.c", "w") as f: f.write(c)
           '
 
+      - name: Set Custom Kernel Version & Host
+        run: |
+          # Hapus CONFIG_LOCALVERSION lama jika ada, lalu pasang nama Anda
+          sed -i '/CONFIG_LOCALVERSION=/d' arch/arm64/configs/lineageos_a37f_defconfig
+          echo 'CONFIG_LOCALVERSION="-Sanditiana26"' >> arch/arm64/configs/lineageos_a37f_defconfig
+          # Ubah nama builder (user@host) di informasi versi kernel
+          export KBUILD_BUILD_USER="sanditiana26"
+          export KBUILD_BUILD_HOST="github-actions"
+
       - name: Clone Toolchains (GCC 4.9)
         run: |
           mkdir -p $HOME/android/TOOLS/GCC
-          git clone --depth=1 https://github.com/LineageOS/android_prebuilts_gcc_linux-x86_aarch64_aarch64-linux-android-4.9 $HOME/android/TOOLS/GCC/los-4.9-64
-          git clone --depth=1 https://github.com/LineageOS/android_prebuilts_gcc_linux-x86_arm_arm-linux-androideabi-4.9 $HOME/android/TOOLS/GCC/los-4.9-32
+          git clone --depth=1 https://github.com $HOME/android/TOOLS/GCC/los-4.9-64
+          git clone --depth=1 https://github.com $HOME/android/TOOLS/GCC/los-4.9-32
 
       - name: Run build.sh
+        env:
+          KBUILD_BUILD_USER: sanditiana26
+          KBUILD_BUILD_HOST: oppo-a37f
         run: |
           chmod +x build.sh
           ./build.sh
