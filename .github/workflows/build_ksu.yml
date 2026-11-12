@@ -74,6 +74,20 @@ jobs:
           export KBUILD_BUILD_USER="sanditiana26"
           export KBUILD_BUILD_HOST="github-actions"
 
+          
+      - name: Fix SIM 2 Dual-SIM No Signal Bug
+        run: |
+          # Pastikan node uim2 (SIM 2) dipaksa berstatus 'okay' pada DTS utama perangkat (15399)
+          TARGET_DTS="arch/arm/boot/dts/qcom/15399/msm8916-mtp-15399.dtsi"
+          if [ -f "$TARGET_DTS" ]; then
+            echo "" >> $TARGET_DTS
+            echo "&soc {" >> $TARGET_DTS
+            echo "    uim2: qcom,sim@40b4000 {" >> $TARGET_DTS
+            echo "        status = \"okay\";" >> $TARGET_DTS
+            echo "    };" >> $TARGET_DTS
+            echo "};" >> $TARGET_DTS
+          fi
+
       - name: Clone Toolchains (GCC 4.9)
         run: |
           mkdir -p $HOME/android/TOOLS/GCC
