@@ -761,7 +761,4 @@ CONFIG_QMI_ENCDEC=y
 # pendekatan yang sama dipakai a6010 di lineage-23.2 (BOARD_KERNEL_IMAGE_NAME
 # := zImage-dtb; A37 arm64 sehingga padanannya Image-dtb).
 # Lihat arch/arm64/boot/Makefile:32 dan arch/arm64/Kconfig:595.
-CONFIG_KSU=y
-CONFIG_KPROBES=n
-CONFIG_OVERLAY_FS=y
 
