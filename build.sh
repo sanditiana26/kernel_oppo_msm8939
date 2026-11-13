@@ -32,6 +32,9 @@ if [ -f "anykernel3/dtbtool.c" ]; then
     rm -f anykernel3/dtbtool
 fi
 
+cp out/arch/arm64/boot/Image.gz anykernel3/
+cp out/arch/arm64/boot/dt.img anykernel3/
+
 echo "Isi folder anykernel3 sebelum di-zip:"
 ls -lh anykernel3/
 
