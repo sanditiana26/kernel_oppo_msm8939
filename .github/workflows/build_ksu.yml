@@ -15,55 +15,6 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y bc bison build-essential ccache curl flex g++-multilib gcc-multilib git gnupg gperf lib32ncurses5-dev lib32z1-dev liblz4-tool libncurses5-dev libssl-dev libxml2-utils lzop python3 unzip zip
 
-      - name: Setup KernelSU v0.9.5 (Non-GKI)
-        run: |
-          curl -LSs "https://githubusercontent.com" | bash -s v0.9.5
-
-      - name: Apply KernelSU Manual Hooks (3.10)
-        run: |
-          python3 -c '
-          import re
-
-          # 1. fs/exec.c
-          with open("fs/exec.c", "r") as f: c = f.read()
-          if "ksu_handle_execveat" not in c:
-              decl = "#ifdef CONFIG_KSU\nextern bool ksu_execveat_hook __read_mostly;\nextern int ksu_handle_execveat(int *fd, struct filename **filename_ptr, void *argv, void *envp, int *flags);\nextern int ksu_handle_execveat_sucompat(int *fd, struct filename **filename_ptr, void *argv, void *envp, int *flags);\n#endif\n"
-              hook = "\n#ifdef CONFIG_KSU\n\tif (unlikely(ksu_execveat_hook))\n\t\tksu_handle_execveat(&fd, &filename, &argv, &envp, &flags);\n\telse\n\t\tksu_handle_execveat_sucompat(&fd, &filename, &argv, &envp, &flags);\n#endif\n"
-              c = re.sub(r"(static int do_execve_common\s*\([^\)]*\)\s*\{)", decl + r"\1" + hook, c, count=1)
-              with open("fs/exec.c", "w") as f: f.write(c)
-
-          # 2. fs/open.c
-          with open("fs/open.c", "r") as f: c = f.read()
-          if "ksu_handle_faccessat" not in c:
-              decl = "#ifdef CONFIG_KSU\nextern int ksu_handle_faccessat(int *dfd, const char __user **filename_user, int *mode, int *flags);\n#endif\n"
-              hook = "\n#ifdef CONFIG_KSU\n\tksu_handle_faccessat(&dfd, &filename, &mode, NULL);\n#endif\n"
-              c = re.sub(r"(SYSCALL_DEFINE3\(faccessat[^\)]*\)\s*\{)", decl + r"\1" + hook, c, count=1)
-              with open("fs/open.c", "w") as f: f.write(c)
-
-          # 3. fs/read_write.c
-          with open("fs/read_write.c", "r") as f: c = f.read()
-          if "ksu_handle_vfs_read" not in c:
-              decl = "#ifdef CONFIG_KSU\nextern bool ksu_vfs_read_hook __read_mostly;\nextern int ksu_handle_vfs_read(struct file **file_ptr, char __user **buf_ptr, size_t *count_ptr, loff_t **pos);\n#endif\n"
-              hook = "\n#ifdef CONFIG_KSU\n\tif (unlikely(ksu_vfs_read_hook))\n\t\tksu_handle_vfs_read(&file, &buf, &count, &pos);\n#endif\n"
-              c = re.sub(r"(ssize_t vfs_read\s*\([^\)]*\)\s*\{)", decl + r"\1" + hook, c, count=1)
-              with open("fs/read_write.c", "w") as f: f.write(c)
-
-          # 4. fs/stat.c
-          with open("fs/stat.c", "r") as f: c = f.read()
-          if "ksu_handle_stat" not in c:
-              decl = "#ifdef CONFIG_KSU\nextern int ksu_handle_stat(int *dfd, const char __user **filename_user, int *flags);\n#endif\n"
-              hook = "\n#ifdef CONFIG_KSU\n\tksu_handle_stat(&dfd, &filename, &flag);\n#endif\n"
-              c = re.sub(r"(int vfs_fstatat\s*\([^\)]*\)\s*\{)", decl + r"\1" + hook, c, count=1)
-              with open("fs/stat.c", "w") as f: f.write(c)
-
-          # 5. drivers/input/input.c
-          with open("drivers/input/input.c", "r") as f: c = f.read()
-          if "ksu_handle_input_handle_event" not in c:
-              decl = "#ifdef CONFIG_KSU\nextern bool ksu_input_hook __read_mostly;\nextern int ksu_handle_input_handle_event(unsigned int *type, unsigned int *code, int *value);\n#endif\n"
-              hook = "\n#ifdef CONFIG_KSU\n\tif (unlikely(ksu_input_hook))\n\t\tksu_handle_input_handle_event(&type, &code, &value);\n#endif\n"
-              c = re.sub(r"(static void input_handle_event\s*\([^\)]*\)\s*\{)", decl + r"\1" + hook, c, count=1)
-              with open("drivers/input/input.c", "w") as f: f.write(c)
-          '
 
       - name: Set Custom Kernel Version & Host
         run: |
@@ -72,21 +23,6 @@ jobs:
           export KBUILD_BUILD_USER="sanditiana26"
           export KBUILD_BUILD_HOST="github"
 
-          
-      - name: Fix SIM 2 Dual-SIM No Signal Bug
-        run: |
-          # Pastikan node uim2 (SIM 2) dipaksa berstatus 'okay' pada DTS utama perangkat (15399)
-          TARGET_DTS="arch/arm/boot/dts/qcom/15399/msm8916-mtp-15399.dtsi"
-          if [ -f "$TARGET_DTS" ]; then
-            echo "" >> $TARGET_DTS
-            echo "&soc {" >> $TARGET_DTS
-            echo "    uim2: qcom,sim@40b4000 {" >> $TARGET_DTS
-            echo "        status = \"okay\";" >> $TARGET_DTS
-            echo "    };" >> $TARGET_DTS
-            echo "};" >> $TARGET_DTS
-          fi
-
-      
       - name: Clone Toolchains (GCC 4.9)
         run: |
           mkdir -p $HOME/android/TOOLS/GCC
