@@ -16,7 +16,8 @@ make -j$(nproc --all) O=out \
     CROSS_COMPILE=aarch64-linux-android- \
     CROSS_COMPILE_ARM32=arm-linux-androideabi- \
     CONFIG_NO_ERROR_ON_MISMATCH=y \
-    CONFIG_DEBUG_SECTION_MISMATCH=y || exit 1
+    CONFIG_DEBUG_SECTION_MISMATCH=y \
+    Image.gz dtbs || exit 1
 
 # Generate dt.img baru menggunakan dtbtool.c jika ada di folder anykernel3
 if [ -f "anykernel3/dtbtool.c" ]; then
