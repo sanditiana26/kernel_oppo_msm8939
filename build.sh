@@ -18,28 +18,18 @@ make -j$(nproc --all) O=out \
     CONFIG_NO_ERROR_ON_MISMATCH=y \
     CONFIG_DEBUG_SECTION_MISMATCH=y \
     Image.gz dtbs || exit 1
-
+    
 # Generate dt.img baru menggunakan dtbtool.c jika ada di folder anykernel3
 if [ -f "anykernel3/dtbtool.c" ]; then
     gcc -o anykernel3/dtbtool anykernel3/dtbtool.c
-    ./anykernel3/dtbtool -s 2048 -o out/arch/arm64/boot/dt.img -p out/scripts/dtc/ out/arch/arm64/boot/dts/qcom/
+    DTB_DIR=$(find out/arch/arm64/boot/dts -name "*.dtb" -printf "%h\n" | head -n 1)
+    if [ -n "$DTB_DIR" ]; then
+        echo "Menjalankan dtbtool pada direktori: $DTB_DIR"
+        ./anykernel3/dtbtool -s 2048 -o out/arch/arm64/boot/dt.img -p out/scripts/dtc/ "$DTB_DIR/"
+    else
+        echo "File .dtb tidak ditemukan di out/arch/arm64/boot/dts!"
+    fi
     rm -f anykernel3/dtbtool
-fi
-
-# Salin kernel hasil build terbaru
-if [ -f "out/arch/arm64/boot/Image.gz-dtb" ]; then
-    rm -f anykernel3/dt.img
-    cp out/arch/arm64/boot/Image.gz-dtb anykernel3/
-elif [ -f "out/arch/arm64/boot/Image.gz" ]; then
-    cp out/arch/arm64/boot/Image.gz anykernel3/
-else
-    cp out/arch/arm64/boot/Image anykernel3/
-fi
-
-# Timpa dt.img lama jika dt.img baru berhasil dibuat
-if [ -f "out/arch/arm64/boot/dt.img" ]; then
-    rm -f anykernel3/dt.img
-    cp out/arch/arm64/boot/dt.img anykernel3/
 fi
 
 echo "Isi folder anykernel3 sebelum di-zip:"
