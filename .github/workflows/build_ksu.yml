@@ -47,6 +47,10 @@ jobs:
           chmod +x build.sh
           ./build.sh
 
+      - name: Verify KSU Config
+        run: |
+          grep "CONFIG_KSU" out/.config || echo "CONFIG_KSU NOT FOUND!"
+
       - name: Upload KernelSU ZIP
         uses: actions/upload-artifact@v4
         with:
