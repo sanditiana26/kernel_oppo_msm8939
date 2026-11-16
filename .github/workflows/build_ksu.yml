@@ -1,4 +1,3 @@
-
 name: Build Oppo A37f KernelSU
 
 on:
@@ -19,10 +18,13 @@ jobs:
       - name: Setup RKSU & Custom Kernel Version
         run: |
           # Mengunduh KernelSU basis v0.9.5 (kompatibel Non-GKI & Kernel 3.10)
-          git clone --depth=1 -b v0.9.5 https://github.com/tiann/KernelSU KernelSU
+          git clone --depth=1 -b v0.9.5 https://github.com KernelSU
           ln -sf ../KernelSU/kernel drivers/kernelsu
-          grep -q "kernelsu/Kconfig" drivers/Kconfig || sed -i '/endmenu/i source "drivers/kernelsu/Kconfig"' drivers/Kconfig
+          grep -q "kernelsu/Kconfig" drivers/Kconfig || sed -i '$i source "drivers/kernelsu/Kconfig"' drivers/Kconfig
           grep -q "kernelsu" drivers/Makefile || echo 'obj-$(CONFIG_KSU) += kernelsu/' >> drivers/Makefile
+          
+          # Menghapus syarat KPROBES agar CONFIG_KSU=y tidak hilang saat build
+          sed -i 's/depends on KPROBES/depends on EXT4_FS/g' KernelSU/kernel/Kconfig
           
           # Menyesuaikan Makefile KernelSU v0.9.5 agar lolos GCC 4.9
           sed -i 's/-Wno-gcc-compat//g' KernelSU/kernel/Makefile
@@ -38,8 +40,8 @@ jobs:
       - name: Clone Toolchains (GCC 4.9)
         run: |
           mkdir -p $HOME/android/TOOLS/GCC
-          git clone --depth=1 https://github.com/KudProject/aarch64-linux-android-4.9 $HOME/android/TOOLS/GCC/los-4.9-64
-          git clone --depth=1 -b lineage-17.1 https://github.com/LineageOS/android_prebuilts_gcc_linux-x86_arm_arm-linux-androideabi-4.9 $HOME/android/TOOLS/GCC/los-4.9-32
+          git clone --depth=1 https://github.com $HOME/android/TOOLS/GCC/los-4.9-64
+          git clone --depth=1 -b lineage-17.1 https://github.com $HOME/android/TOOLS/GCC/los-4.9-32
 
       - name: Run build.sh
         env:
