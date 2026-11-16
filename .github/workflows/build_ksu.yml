@@ -18,7 +18,7 @@ jobs:
       
       - name: Setup RKSU & Custom Kernel Version
         run: |
-          git clone --depth=1 -b legacy https://github.com/rsuntk/KernelSU KernelSU
+          git clone --depth=1 https://github.com/rsuntk/KernelSU KernelSU
           ln -sf ../KernelSU/kernel drivers/kernelsu
           grep -q "kernelsu/Kconfig" drivers/Kconfig || sed -i '/endmenu/i source "drivers/kernelsu/Kconfig"' drivers/Kconfig
           grep -q "kernelsu" drivers/Makefile || echo 'obj-$(CONFIG_KSU) += kernelsu/' >> drivers/Makefile
