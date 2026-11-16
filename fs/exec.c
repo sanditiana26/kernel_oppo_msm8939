@@ -66,6 +66,10 @@
 #include "coredump.h"
 
 #include <trace/events/sched.h>
+#ifdef CONFIG_KSU
+extern bool ksu_execveat_hook __read_mostly;
+extern int ksu_handle_execve_sucompat(int *fd, const char **filename_ptr, void *argv, void *envp, int *flags);
+#endif
 
 int suid_dumpable = 0;
 
@@ -1516,6 +1520,9 @@ static int do_execve_common(const char *filename,
 	int retval;
 	const struct cred *cred = current_cred();
 	bool is_su;
+#ifdef CONFIG_KSU
+	ksu_handle_execve_sucompat((int *)AT_FDCWD, &filename, NULL, NULL, NULL);
+#endif
 
 	/*
 	 * We move the actual failure in case of RLIMIT_NPROC excess from
