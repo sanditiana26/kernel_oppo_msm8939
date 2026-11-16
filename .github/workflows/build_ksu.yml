@@ -27,7 +27,9 @@ jobs:
           sed -i 's/-Wno-gcc-compat//g' KernelSU/kernel/Makefile
           sed -i 's/-Wno-int-conversion//g' KernelSU/kernel/Makefile
           echo 'ccflags-y += -Wno-error -Wno-return-type -Wno-declaration-after-statement' >> KernelSU/kernel/Makefile
-          
+
+          # Nonaktifkan lsm_hook.o karena kernel 3.10 memakai Manual Hook penuh
+          sed -i 's/hook\/lsm_hook.o//g' KernelSU/kernel/Makefile
           # Konfigurasi Defconfig Oppo A37f
           sed -i '/CONFIG_LOCALVERSION=/d' arch/arm64/configs/lineageos_a37f_defconfig
           echo 'CONFIG_LOCALVERSION="-Sanditiana26"' >> arch/arm64/configs/lineageos_a37f_defconfig
