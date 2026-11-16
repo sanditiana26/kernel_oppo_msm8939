@@ -1,3 +1,4 @@
+
 name: Build Oppo A37f KernelSU
 
 on:
@@ -15,20 +16,24 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y bc bison build-essential ccache curl flex g++-multilib gcc-multilib git gnupg gperf lib32ncurses5-dev lib32z1-dev liblz4-tool libncurses5-dev libssl-dev libxml2-utils lzop python3 unzip zip
 
-      
       - name: Setup RKSU & Custom Kernel Version
         run: |
           git clone --depth=1 https://github.com/rsuntk/KernelSU KernelSU
           ln -sf ../KernelSU/kernel drivers/kernelsu
           grep -q "kernelsu/Kconfig" drivers/Kconfig || sed -i '/endmenu/i source "drivers/kernelsu/Kconfig"' drivers/Kconfig
           grep -q "kernelsu" drivers/Makefile || echo 'obj-$(CONFIG_KSU) += kernelsu/' >> drivers/Makefile
+          
+          # Memperbaiki Makefile RKSU agar kompatibel dengan GCC 4.9
+          sed -i 's/-Wno-gcc-compat//g' KernelSU/kernel/Makefile
+          sed -i 's/-Wno-int-conversion//g' KernelSU/kernel/Makefile
+          echo 'ccflags-y += -Wno-error -Wno-return-type -Wno-declaration-after-statement' >> KernelSU/kernel/Makefile
+          
+          # Konfigurasi Defconfig Oppo A37f
           sed -i '/CONFIG_LOCALVERSION=/d' arch/arm64/configs/lineageos_a37f_defconfig
           echo 'CONFIG_LOCALVERSION="-Sanditiana26"' >> arch/arm64/configs/lineageos_a37f_defconfig
           echo 'CONFIG_KSU=y' >> arch/arm64/configs/lineageos_a37f_defconfig
           echo 'CONFIG_KSU_MANUAL_HOOK=y' >> arch/arm64/configs/lineageos_a37f_defconfig
           echo 'CONFIG_KPROBES=n' >> arch/arm64/configs/lineageos_a37f_defconfig
-          export KBUILD_BUILD_USER="sanditiana26"
-          export KBUILD_BUILD_HOST="github"
 
       - name: Clone Toolchains (GCC 4.9)
         run: |
@@ -40,6 +45,7 @@ jobs:
         env:
           KBUILD_BUILD_USER: sanditiana26
           KBUILD_BUILD_HOST: oppo-a37f
+          KCFLAGS: "-Wno-error"
         run: |
           chmod +x build.sh
           ./build.sh
