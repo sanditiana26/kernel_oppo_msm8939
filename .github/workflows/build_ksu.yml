@@ -26,9 +26,9 @@ jobs:
           sed -i 's/depends on KPROBES/depends on EXT4_FS/g' KernelSU/kernel/Kconfig
           sed -i 's/default n/default y/g' KernelSU/kernel/Kconfig
 
-          # 1. Hapus lsm_hooks.h & potong bersih mulai dari KSU_LSM_HOOK_HACK_INIT sampai akhir file
+          # 1. Hapus lsm_hooks.h & potong bersih mulai dari baris 693 (#ifndef MODULE) sampai akhir file
           sed -i '/#include <linux\/lsm_hooks.h>/d' KernelSU/kernel/*.c KernelSU/kernel/*.h
-          sed -i '/#define KSU_LSM_HOOK_HACK_INIT/,$d' KernelSU/kernel/core_hook.c
+          sed -i '693,$d' KernelSU/kernel/core_hook.c
           echo 'void __init ksu_lsm_hook_init(void) {}' >> KernelSU/kernel/core_hook.c
           echo 'void __init ksu_core_init(void) { ksu_lsm_hook_init(); ksu_allowlist_init(); ksu_throne_tracker_init(); ksu_sucompat_init(); }' >> KernelSU/kernel/core_hook.c
           echo 'void ksu_core_exit(void) { ksu_allowlist_exit(); ksu_throne_tracker_exit(); ksu_sucompat_exit(); }' >> KernelSU/kernel/core_hook.c
