@@ -24,7 +24,9 @@ jobs:
           grep -q "kernelsu" drivers/Makefile || echo 'obj-$(CONFIG_KSU) += kernelsu/' >> drivers/Makefile
           sed -i 's/depends on OVERLAY_FS/depends on EXT4_FS/g' KernelSU/kernel/Kconfig
           sed -i 's/default n/default y/g' KernelSU/kernel/Kconfig
-          
+          # Hapus include linux/lsm_hooks.h yang tidak ada di Kernel 3.10
+          sed -i '/#include <linux\/lsm_hooks.h>/d' KernelSU/kernel/*.c KernelSU/kernel/*.h
+          sed -i 's/security_add_hooks/\/\/security_add_hooks/g' KernelSU/kernel/core_hook.c
           echo 'CONFIG_OVERLAY_FS=y' >> arch/arm64/configs/lineageos_a37f_defconfig
           # Fix error 'request for member val' pada Kernel 3.10 (non-strict uidgid)
           sed -i 's/current_uid()\.val/current_uid()/g' KernelSU/kernel/*.c KernelSU/kernel/*.h
