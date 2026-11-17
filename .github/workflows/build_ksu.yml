@@ -22,7 +22,11 @@ jobs:
           ln -sf ../KernelSU/kernel drivers/kernelsu
           grep -q "kernelsu/Kconfig" drivers/Kconfig || sed -i '$i source "drivers/kernelsu/Kconfig"' drivers/Kconfig
           grep -q "kernelsu" drivers/Makefile || echo 'obj-$(CONFIG_KSU) += kernelsu/' >> drivers/Makefile
+          sed -i 's/depends on OVERLAY_FS/depends on EXT4_FS/g' KernelSU/kernel/Kconfig
+          sed -i 's/default n/default y/g' KernelSU/kernel/Kconfig
           
+          echo 'CONFIG_OVERLAY_FS=y' >> arch/arm64/configs/lineageos_a37f_defconfig
+
           # Menghapus syarat KPROBES agar CONFIG_KSU=y tidak hilang saat build
           sed -i 's/depends on KPROBES/depends on EXT4_FS/g' KernelSU/kernel/Kconfig
           
