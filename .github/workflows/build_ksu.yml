@@ -29,9 +29,10 @@ jobs:
           # 1. Hapus lsm_hooks.h & nonaktifkan LSM hook secara aman pada core_hook.c (Kernel 3.10)
           sed -i '/#include <linux\/lsm_hooks.h>/d' KernelSU/kernel/*.c KernelSU/kernel/*.h
           sed -i 's/#ifndef MODULE/#if 0/g' KernelSU/kernel/core_hook.c
-          sed -i 's/for (int i = 0;/int i; for (i = 0;/g' KernelSU/kernel/core_hook.c
           sed -i '/static struct security_hook_list ksu_hooks\[\]/,$d' KernelSU/kernel/core_hook.c
+          echo '#endif' >> KernelSU/kernel/core_hook.c
           echo 'void __init ksu_lsm_hook_init(void) {}' >> KernelSU/kernel/core_hook.c
+
 
           # 2. Fix error 'request for member val' pada Kernel 3.10
           find KernelSU/kernel -type f \( -name "*.c" -o -name "*.h" \) -exec sed -i \
