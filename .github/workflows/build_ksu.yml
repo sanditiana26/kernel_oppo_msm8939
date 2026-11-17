@@ -28,7 +28,7 @@ jobs:
 
           # Hapus include linux/lsm_hooks.h dan blok ksu_hooks[] yang tidak ada di Kernel 3.10
           sed -i '/#include <linux\/lsm_hooks.h>/d' KernelSU/kernel/*.c KernelSU/kernel/*.h
-          sed -i '/static struct security_hook_list ksu_hooks\[\]/,$c\void __init ksu_lsm_hook_init(void) {}' KernelSU/kernel/core_hook.c
+          sed -i '/#ifndef MODULE/,$c\void __init ksu_lsm_hook_init(void) {}' KernelSU/kernel/core_hook.c
 
           # Fix error 'request for member val' pada Kernel 3.10 (non-strict uidgid)
           sed -i 's/current_uid()\.val/current_uid()/g' KernelSU/kernel/*.c KernelSU/kernel/*.h
