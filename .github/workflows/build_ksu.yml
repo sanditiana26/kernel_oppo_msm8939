@@ -30,7 +30,7 @@ jobs:
           sed -i '/#include <linux\/lsm_hooks.h>/d' KernelSU/kernel/*.c KernelSU/kernel/*.h
           sed -i '/#ifndef MODULE/,$c\void __init ksu_lsm_hook_init(void) {}' KernelSU/kernel/core_hook.c
         
-          #  Fix error 'request for member val' pada Kernel 3.10 (di seluruh subfolder termasuk selinux/)
+          # Fix error 'request for member val' pada Kernel 3.10 (di seluruh subfolder termasuk selinux/)
           find KernelSU/kernel -type f \( -name "*.c" -o -name "*.h" \) -exec sed -i \
             -e 's/current_uid()\.val/current_uid()/g' \
             -e 's/current_euid()\.val/current_euid()/g' \
@@ -44,6 +44,14 @@ jobs:
             -e 's/selinux_state\.ss->policydb/policydb/g' \
             -e 's/&selinux_state\.ss->policy_rwlock/&policy_rwlock/g' \
             -e 's/selinux_state\.ss->policy_rwlock/policy_rwlock/g' {} +
+
+          # Fix read_iter menjadi read pada ksud.c untuk Kernel 3.10
+          sed -i 's/static ssize_t (\*orig_read_iter)(struct kiocb \*, struct iov_iter \*);/static ssize_t (\*orig_read)(struct file \*, char __user \*, size_t, loff_t \*);/g' KernelSU/kernel/ksud.c
+          sed -i 's/static ssize_t read_iter_proxy(struct kiocb \*iocb, struct iov_iter \*to)/static ssize_t read_proxy(struct file \*file, char __user \*buf, size_t count, loff_t \*pos)/g' KernelSU/kernel/ksud.c
+          sed -i 's/struct file \*file = iocb->ki_filp;/\/\/ patched for 3.10/g' KernelSU/kernel/ksud.c
+          sed -i 's/orig_read_iter(iocb, to)/orig_read(file, buf, count, pos)/g' KernelSU/kernel/ksud.c
+          sed -i 's/orig_read_iter = file->f_op->read_iter;/orig_read = file->f_op->read;/g' KernelSU/kernel/ksud.c
+          sed -i 's/fops_proxy.read_iter = read_iter_proxy;/fops_proxy.read = read_proxy;/g' KernelSU/kernel/ksud.c
      
           # Menyesuaikan Makefile KernelSU v0.9.5 agar lolos GCC 4.9
           sed -i 's/-Wno-gcc-compat//g' KernelSU/kernel/Makefile
