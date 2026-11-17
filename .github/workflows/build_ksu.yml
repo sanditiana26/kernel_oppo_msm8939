@@ -32,6 +32,8 @@ jobs:
           sed -i '/static struct security_hook_list ksu_hooks\[\]/,$d' KernelSU/kernel/core_hook.c
           echo '#endif' >> KernelSU/kernel/core_hook.c
           echo 'void __init ksu_lsm_hook_init(void) {}' >> KernelSU/kernel/core_hook.c
+          echo 'void __init ksu_core_init(void) {}' >> KernelSU/kernel/core_hook.c
+          echo 'void ksu_core_exit(void) {}' >> KernelSU/kernel/core_hook.c
 
 
           # 2. Fix error 'request for member val' pada Kernel 3.10
