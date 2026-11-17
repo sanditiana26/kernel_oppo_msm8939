@@ -26,26 +26,26 @@ jobs:
           sed -i 's/depends on KPROBES/depends on EXT4_FS/g' KernelSU/kernel/Kconfig
           sed -i 's/default n/default y/g' KernelSU/kernel/Kconfig
 
-          # Hapus include linux/lsm_hooks.h dan blok ksu_hooks[] yang tidak ada di Kernel 3.10
+          # 1. Hapus lsm_hooks.h & hanya hapus blok ksu_hooks[] tanpa memotong ksu_core_init
           sed -i '/#include <linux\/lsm_hooks.h>/d' KernelSU/kernel/*.c KernelSU/kernel/*.h
-          sed -i '/#ifndef MODULE/,$c\void __init ksu_lsm_hook_init(void) {}' KernelSU/kernel/core_hook.c
+          sed -i '/static struct security_hook_list ksu_hooks\[\]/,/^}/c\void __init ksu_lsm_hook_init(void) {}' KernelSU/kernel/core_hook.c
         
-          # Fix error 'request for member val' pada Kernel 3.10 (di seluruh subfolder termasuk selinux/)
+          # 2. Fix error 'request for member val' pada Kernel 3.10
           find KernelSU/kernel -type f \( -name "*.c" -o -name "*.h" \) -exec sed -i \
             -e 's/current_uid()\.val/current_uid()/g' \
             -e 's/current_euid()\.val/current_euid()/g' \
             -e 's/uid\.val/uid/g' \
             -e 's/gid\.val/gid/g' {} +
 
-          # Fix kompatibilitas Kernel 3.10 pada folder selinux/ (selinux_state & API lama)
+          # 3. Fix kompatibilitas Kernel 3.10 pada folder selinux/
           find KernelSU/kernel/selinux -type f \( -name "*.c" -o -name "*.h" \) -exec sed -i \
             -e 's/selinux_state\.enforcing/selinux_enforcing/g' \
             -e 's/&selinux_state\.ss->policydb/&policydb/g' \
             -e 's/selinux_state\.ss->policydb/policydb/g' \
             -e 's/&selinux_state\.ss->policy_rwlock/&policy_rwlock/g' \
             -e 's/selinux_state\.ss->policy_rwlock/policy_rwlock/g' {} +
- 
-          # Fix read_iter menjadi read pada ksud.c untuk Kernel 3.10
+
+          # 4. Fix read_iter menjadi read pada ksud.c untuk Kernel 3.10
           sed -i 's/(\*orig_read_iter)(struct kiocb \*, struct iov_iter \*)/(\*orig_read)(struct file \*, char __user \*, size_t, loff_t \*)/g' KernelSU/kernel/ksud.c
           sed -i 's/read_iter_proxy(struct kiocb \*iocb, struct iov_iter \*to)/ksu_read_proxy(struct file \*file, char __user \*buf, size_t count, loff_t \*pos)/g' KernelSU/kernel/ksud.c
           sed -i 's/read_iter_proxy/ksu_read_proxy/g' KernelSU/kernel/ksud.c
@@ -56,12 +56,73 @@ jobs:
           sed -i 's/orig_read_iter = file->f_op->read_iter;/orig_read = file->f_op->read;/g' KernelSU/kernel/ksud.c
           sed -i 's/fops_proxy.read_iter = .*/fops_proxy.read = ksu_read_proxy;/g' KernelSU/kernel/ksud.c
 
-          # Menyesuaikan Makefile KernelSU v0.9.5 agar lolos GCC 4.9
+          # 5. Tambahkan fungsi pembantu yang belum ada di Kernel 3.10
+          cat << 'EOF' >> KernelSU/kernel/kernel_compat.c
+
+          #include <linux/sort.h>
+          #include <linux/dcache.h>
+
+          #if LINUX_VERSION_CODE < KERNEL_VERSION(3, 18, 0)
+          char *bin2hex(char *dst, const void *src, size_t count)
+          {
+          	const unsigned char *_src = src;
+          	while (count--)
+          		dst = hex_byte_pack(dst, *_src++);
+          	return dst;
+          }
+
+          ssize_t strscpy(char *dest, const char *src, size_t count)
+          {
+          	long res = 0;
+          	if (count == 0)
+          		return -E2BIG;
+          	while (count) {
+          		char c = src[res];
+          		dest[res] = c;
+          		if (!c)
+          			return res;
+          		res++;
+          		count--;
+          	}
+          	if (res)
+          		dest[res - 1] = '\0';
+          	return -E2BIG;
+          }
+
+          static int gid_cmp(const void *_a, const void *_b)
+          {
+          	kgid_t a = *(kgid_t *)_a;
+          	kgid_t b = *(kgid_t *)_b;
+          	return gid_gt(a, b) - gid_lt(a, b);
+          }
+
+          void groups_sort(struct group_info *group_info)
+          {
+          	int nblocks, i;
+          	int count = group_info->ngroups;
+          	if (!count)
+          		return;
+          	nblocks = group_info->nblocks;
+          	for (i = 0; i < nblocks; i++) {
+          		int cp_count = min(NGROUPS_PER_BLOCK, count);
+          		sort(group_info->blocks[i], cp_count, sizeof(kgid_t), gid_cmp, NULL);
+          		count -= NGROUPS_PER_BLOCK;
+          	}
+          }
+
+          bool d_is_reg(const struct dentry *dentry)
+          {
+          	return dentry && dentry->d_inode && S_ISREG(dentry->d_inode->i_mode);
+          }
+          #endif
+          EOF
+
+          # 6. Menyesuaikan Makefile KernelSU v0.9.5 agar lolos GCC 4.9
           sed -i 's/-Wno-gcc-compat//g' KernelSU/kernel/Makefile
           sed -i 's/-Wno-int-conversion//g' KernelSU/kernel/Makefile
           echo 'ccflags-y += -Wno-error -Wno-return-type -Wno-declaration-after-statement' >> KernelSU/kernel/Makefile
 
-          # Konfigurasi Defconfig Oppo A37f
+          # 7. Konfigurasi Defconfig Oppo A37f
           sed -i '/CONFIG_LOCALVERSION=/d' arch/arm64/configs/lineageos_a37f_defconfig
           echo 'CONFIG_LOCALVERSION="-Sanditiana26"' >> arch/arm64/configs/lineageos_a37f_defconfig
           echo 'CONFIG_OVERLAY_FS=y' >> arch/arm64/configs/lineageos_a37f_defconfig
