@@ -25,13 +25,12 @@ jobs:
           sed -i 's/depends on OVERLAY_FS/depends on EXT4_FS/g' KernelSU/kernel/Kconfig
           sed -i 's/depends on KPROBES/depends on EXT4_FS/g' KernelSU/kernel/Kconfig
           sed -i 's/default n/default y/g' KernelSU/kernel/Kconfig
-
-          # 1. Hapus lsm_hooks.h & ganti seluruh blok LSM hook (ksu_hooks[] + security_add_hooks)
+          
+          # 1. Hapus lsm_hooks.h & ganti seluruh blok LSM hook (KSU_LSM_HOOK_HACK_INIT s/d #endif)
           sed -i '/#include <linux\/lsm_hooks.h>/d' KernelSU/kernel/*.c KernelSU/kernel/*.h
-          sed -i '/static struct security_hook_list ksu_hooks\[\]/,/security_add_hooks(ksu_hooks, ARRAY_SIZE(ksu_hooks));/c\void __init ksu_lsm_hook_init(void) {}' KernelSU/kernel/core_hook.c
-          sed -i '/^}/!b;N;/\nvoid __init ksu_core_init/!b;s/^}//' KernelSU/kernel/core_hook.c
+          sed -i '/#define KSU_LSM_HOOK_HACK_INIT/,/void __init ksu_lsm_hook_init(void)/c\void __init ksu_lsm_hook_init(void) {}' KernelSU/kernel/core_hook.c
+          sed -i '/#ifndef MODULE/,/#endif/d' KernelSU/kernel/core_hook.c
 
-       
           # 2. Fix error 'request for member val' pada Kernel 3.10
           find KernelSU/kernel -type f \( -name "*.c" -o -name "*.h" \) -exec sed -i \
             -e 's/current_uid()\.val/current_uid()/g' \
