@@ -26,10 +26,18 @@ jobs:
           sed -i 's/depends on KPROBES/depends on EXT4_FS/g' KernelSU/kernel/Kconfig
           sed -i 's/default n/default y/g' KernelSU/kernel/Kconfig
           
-          # 1. Hapus lsm_hooks.h & ganti seluruh blok LSM hook (KSU_LSM_HOOK_HACK_INIT s/d #endif)
+          # 1. Hapus lsm_hooks.h & nonaktifkan LSM hook secara aman pada core_hook.c (Kernel 3.10)
           sed -i '/#include <linux\/lsm_hooks.h>/d' KernelSU/kernel/*.c KernelSU/kernel/*.h
-          sed -i '/#define KSU_LSM_HOOK_HACK_INIT/,/void __init ksu_lsm_hook_init(void)/c\void __init ksu_lsm_hook_init(void) {}' KernelSU/kernel/core_hook.c
-          sed -i '/#ifndef MODULE/,/#endif/d' KernelSU/kernel/core_hook.c
+          python3 -c '
+          with open("KernelSU/kernel/core_hook.c", "r") as f:
+              code = f.read()
+          code = code.replace("#ifndef MODULE", "#if 0")
+          idx = code.find("static struct security_hook_list ksu_hooks[]")
+          if idx != -1:
+              code = code[:idx] + "void __init ksu_lsm_hook_init(void) {}\n"
+          with open("KernelSU/kernel/core_hook.c", "w") as f:
+              f.write(code)
+          '
 
           # 2. Fix error 'request for member val' pada Kernel 3.10
           find KernelSU/kernel -type f \( -name "*.c" -o -name "*.h" \) -exec sed -i \
@@ -118,10 +126,10 @@ jobs:
           #endif
           EOF
 
-          # 6. Menyesuaikan Makefile KernelSU v0.9.5 agar lolos GCC 4.9
+          # 6. Menyesuaikan Makefile KernelSU v0.9.5 agar lolos GCC 4.9 (C89/gnu99)
           sed -i 's/-Wno-gcc-compat//g' KernelSU/kernel/Makefile
           sed -i 's/-Wno-int-conversion//g' KernelSU/kernel/Makefile
-          echo 'ccflags-y += -Wno-error -Wno-return-type -Wno-declaration-after-statement' >> KernelSU/kernel/Makefile
+          echo 'ccflags-y += -std=gnu99 -Wno-error -Wno-return-type -Wno-declaration-after-statement' >> KernelSU/kernel/Makefile
 
           # 7. Konfigurasi Defconfig Oppo A37f
           sed -i '/CONFIG_LOCALVERSION=/d' arch/arm64/configs/lineageos_a37f_defconfig
