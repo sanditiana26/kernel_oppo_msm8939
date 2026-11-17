@@ -26,6 +26,11 @@ jobs:
           sed -i 's/default n/default y/g' KernelSU/kernel/Kconfig
           
           echo 'CONFIG_OVERLAY_FS=y' >> arch/arm64/configs/lineageos_a37f_defconfig
+          # Fix error 'request for member val' pada Kernel 3.10 (non-strict uidgid)
+          sed -i 's/current_uid()\.val/current_uid()/g' KernelSU/kernel/*.c KernelSU/kernel/*.h
+          sed -i 's/current_euid()\.val/current_euid()/g' KernelSU/kernel/*.c KernelSU/kernel/*.h
+          sed -i 's/\.uid\.val/\.uid/g' KernelSU/kernel/*.c KernelSU/kernel/*.h
+          sed -i 's/\.euid\.val/\.euid/g' KernelSU/kernel/*.c KernelSU/kernel/*.h
 
           # Menghapus syarat KPROBES agar CONFIG_KSU=y tidak hilang saat build
           sed -i 's/depends on KPROBES/depends on EXT4_FS/g' KernelSU/kernel/Kconfig
