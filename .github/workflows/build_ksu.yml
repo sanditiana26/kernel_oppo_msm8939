@@ -1,4 +1,4 @@
-name: Build Oppo A37f KernelSU
+-name: Build Oppo A37f KernelSU
 
 on:
   workflow_dispatch:
