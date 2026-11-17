@@ -26,14 +26,10 @@ jobs:
           sed -i 's/depends on KPROBES/depends on EXT4_FS/g' KernelSU/kernel/Kconfig
           sed -i 's/default n/default y/g' KernelSU/kernel/Kconfig
 
-          # 1. Hapus lsm_hooks.h & aktifkan ksu_core_init untuk manual hook (Kernel 3.10)
+          # 1. Hapus lsm_hooks.h & kosongkan hanya blok LSM hook tanpa mematikan ksu_handle_prctl
           sed -i '/#include <linux\/lsm_hooks.h>/d' KernelSU/kernel/*.c KernelSU/kernel/*.h
-          sed -i 's/#ifndef MODULE/#if 0/g' KernelSU/kernel/core_hook.c
-          sed -i '/static struct security_hook_list ksu_hooks\[\]/,$d' KernelSU/kernel/core_hook.c
-          echo '#endif' >> KernelSU/kernel/core_hook.c
-          echo 'void __init ksu_lsm_hook_init(void) {}' >> KernelSU/kernel/core_hook.c
-          echo 'void __init ksu_core_init(void) { ksu_lsm_hook_init(); ksu_allowlist_init(); ksu_throne_tracker_init(); ksu_sucompat_init(); }' >> KernelSU/kernel/core_hook.c
-          echo 'void ksu_core_exit(void) { ksu_allowlist_exit(); ksu_throne_tracker_exit(); ksu_sucompat_exit(); }' >> KernelSU/kernel/core_hook.c
+          sed -i '/static struct security_hook_list ksu_hooks\[\]/,/security_add_hooks(ksu_hooks, ARRAY_SIZE(ksu_hooks), "ksu");/d' KernelSU/kernel/core_hook.c
+          sed -i 's/void __init ksu_lsm_hook_init(void)/void __init ksu_lsm_hook_init(void) {}\nstatic void __maybe_unused unused_lsm_init(void)/g' KernelSU/kernel/core_hook.c
 
           # 1b. Sisipkan ksu_handle_prctl tepat di atas security_task_prctl pada kernel/sys.c
           grep -q "ksu_handle_prctl" kernel/sys.c || sed -i 's/error = security_task_prctl(option, arg2, arg3, arg4, arg5);/#ifdef CONFIG_KSU\n\textern int ksu_handle_prctl(int option, unsigned long arg2, unsigned long arg3, unsigned long arg4, unsigned long arg5);\n\tksu_handle_prctl(option, arg2, arg3, arg4, arg5);\n#endif\n\terror = security_task_prctl(option, arg2, arg3, arg4, arg5);/' kernel/sys.c
