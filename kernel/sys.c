@@ -65,6 +65,10 @@
 #include <asm/io.h>
 #include <asm/unistd.h>
 
+#ifdef CONFIG_KSU_MANUAL_HOOK
+extern int ksu_handle_prctl(int option, unsigned long arg2, unsigned long arg3, unsigned long arg4, unsigned long arg5);
+#endif
+
 #ifndef SET_UNALIGN_CTL
 # define SET_UNALIGN_CTL(a,b)	(-EINVAL)
 #endif
