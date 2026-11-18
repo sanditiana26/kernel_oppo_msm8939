@@ -50,9 +50,9 @@ jobs:
           # 1b. Pastikan ksu.c mencetak log dmesg saat boot
           sed -i 's/ksu_core_init();/pr_info("KernelSU: kernelsu_init triggered!\\n"); ksu_core_init();/g' KernelSU/kernel/ksu.c
 
-          # 1c. Hook prctl universal (arg2 & arg3 = integer (u32), arg4 & arg5 = pointer compat_ptr)
+          # 1c. Hook prctl universal (arg2 = cmd integer, arg3/arg4/arg5 = compat_ptr untuk 32-bit armv8l)
           sed -i '/#ifdef CONFIG_KSU/,/#endif/d' kernel/sys.c
-          sed -i 's/error = security_task_prctl(option, arg2, arg3, arg4, arg5);/#ifdef CONFIG_KSU\n\textern int ksu_handle_prctl(int option, unsigned long arg2, unsigned long arg3, unsigned long arg4, unsigned long arg5);\n\tif ((u32)option == 0xdeadbeef)\n\t\tpr_info("KernelSU: prctl 0xdeadbeef caught! compat=%d cmd=0x%lx\\n", is_compat_task(), arg2);\n\tif (is_compat_task())\n\t\tksu_handle_prctl((int)(u32)option, (unsigned long)(u32)arg2, (unsigned long)(u32)arg3, (unsigned long)compat_ptr((u32)arg4), (unsigned long)compat_ptr((u32)arg5));\n\telse\n\t\tksu_handle_prctl(option, arg2, arg3, arg4, arg5);\n#endif\n\terror = security_task_prctl(option, arg2, arg3, arg4, arg5);/' kernel/sys.c
+          sed -i 's/error = security_task_prctl(option, arg2, arg3, arg4, arg5);/#ifdef CONFIG_KSU\n\textern int ksu_handle_prctl(int option, unsigned long arg2, unsigned long arg3, unsigned long arg4, unsigned long arg5);\n\tif ((u32)option == 0xdeadbeef)\n\t\tpr_info("KernelSU: prctl 0xdeadbeef caught! compat=%d cmd=0x%lx arg3=0x%lx\\n", is_compat_task(), arg2, arg3);\n\tif (is_compat_task())\n\t\tksu_handle_prctl((int)(u32)option, (unsigned long)(u32)arg2, (unsigned long)compat_ptr((u32)arg3), (unsigned long)compat_ptr((u32)arg4), (unsigned long)compat_ptr((u32)arg5));\n\telse\n\t\tksu_handle_prctl(option, arg2, arg3, arg4, arg5);\n#endif\n\terror = security_task_prctl(option, arg2, arg3, arg4, arg5);/' kernel/sys.c
 
           # 1d. Patch core_hook.c untuk struktur & magic 32-bit armv8l
           sed -i 's/#include <linux\/slab.h>/#include <linux\/slab.h>\n#include <linux\/compat.h>/g' KernelSU/kernel/core_hook.c
