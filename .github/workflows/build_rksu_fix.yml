@@ -1,4 +1,4 @@
-name: Build Oppo A37f Kernel with RKSU Legacy (Universal ARM & ARM64)
+name: Build Oppo A37f Kernel with RKSU Legacy (True Universal)
 
 on:
   workflow_dispatch:
@@ -26,7 +26,7 @@ jobs:
           sed -i 's/depends on KPROBES/depends on EXT4_FS/g' KernelSU/kernel/Kconfig
           sed -i 's/default n/default y/g' KernelSU/kernel/Kconfig
 
-          # 1. Hapus lsm_hooks.h & perbaiki inisialisasi core_hook.c + log dmesg saat boot
+          # 1. Hapus lsm_hooks.h & perbaiki inisialisasi core_hook.c
           sed -i '/#include <linux\/lsm_hooks.h>/d' KernelSU/kernel/*.c KernelSU/kernel/*.h
           sed -i '693,$d' KernelSU/kernel/core_hook.c
           cat << 'EOF' >> KernelSU/kernel/core_hook.c
@@ -47,20 +47,27 @@ jobs:
           }
           EOF
 
-          # 1b. Pastikan ksu.c memanggil ksu_core_init() dan mencetak log dmesg saat module_init
+          # 1b. Pastikan ksu.c mencetak log dmesg saat boot
           sed -i 's/ksu_core_init();/pr_info("KernelSU: kernelsu_init triggered!\\n"); ksu_core_init();/g' KernelSU/kernel/ksu.c
 
-          # 1c. Bersihkan sisa blok CONFIG_KSU lama & sisipkan ksu_handle_prctl universal (ARM & ARM64)
+          # 1c. Hook prctl universal (32-bit armv8l & 64-bit arm64)
           sed -i '/#ifdef CONFIG_KSU/,/#endif/d' kernel/sys.c
           sed -i 's/error = security_task_prctl(option, arg2, arg3, arg4, arg5);/#ifdef CONFIG_KSU\n\textern int ksu_handle_prctl(int option, unsigned long arg2, unsigned long arg3, unsigned long arg4, unsigned long arg5);\n\tif (is_compat_task())\n\t\tksu_handle_prctl(option, (unsigned long)(u32)arg2, (unsigned long)compat_ptr((u32)arg3), (unsigned long)compat_ptr((u32)arg4), (unsigned long)compat_ptr((u32)arg5));\n\telse\n\t\tksu_handle_prctl(option, arg2, arg3, arg4, arg5);\n#endif\n\terror = security_task_prctl(option, arg2, arg3, arg4, arg5);/' kernel/sys.c
 
-          # 1d. Aktifkan guard #ifdef CONFIG_KSU pada seluruh file manual hook
+          # 1d. Patch core_hook.c untuk kompatibilitas 32-bit armv8l
+          sed -i 's/#include <linux\/slab.h>/#include <linux\/slab.h>\n#include <linux\/compat.h>/g' KernelSU/kernel/core_hook.c
+          sed -i 's/if (magic2 != CHANGE_MANAGER_UID)/if ((u32)magic2 != CHANGE_MANAGER_UID)/g' KernelSU/kernel/core_hook.c
+          sed -i 's/if (arg2 == EVENT_POST_FS_DATA)/if ((u32)arg2 == EVENT_POST_FS_DATA)/g' KernelSU/kernel/core_hook.c
+          sed -i 's/if (arg2 == EVENT_BOOT_COMPLETED)/if ((u32)arg2 == EVENT_BOOT_COMPLETED)/g' KernelSU/kernel/core_hook.c
+          sed -i 's/if (arg2 == EVENT_MODULE_MOUNTED)/if ((u32)arg2 == EVENT_MODULE_MOUNTED)/g' KernelSU/kernel/core_hook.c
+          sed -i 's/pr_info("option: 0x%x, cmd: 0x%lx\\n", option, arg2);/pr_info("KernelSU: prctl option: 0x%x, cmd: 0x%lx (compat=%d)\\n", option, arg2, is_compat_task());/g' KernelSU/kernel/core_hook.c
+
+          # 1e. Aktifkan guard #ifdef CONFIG_KSU di semua file hook
           for hookfile in fs/exec.c fs/open.c fs/read_write.c fs/stat.c drivers/input/input.c kernel/sys.c; do
             if [ -f "$hookfile" ]; then
               sed -i 's/#ifdef CONFIG_KSU_MANUAL_HOOK/#ifdef CONFIG_KSU/g' "$hookfile"
             fi
           done
-
           # 2. Fix error 'request for member val' pada Kernel 3.10
           find KernelSU/kernel -type f \( -name "*.c" -o -name "*.h" \) -exec sed -i \
             -e 's/current_uid()\.val/current_uid()/g' \
@@ -87,15 +94,12 @@ jobs:
           sed -i 's/orig_read_iter = file->f_op->read_iter;/orig_read = file->f_op->read;/g' KernelSU/kernel/ksud.c
           sed -i 's/fops_proxy.read_iter = .*/fops_proxy.read = ksu_read_proxy;/g' KernelSU/kernel/ksud.c
 
-          # 5. Tambahkan fungsi pembantu yang belum ada di Kernel 3.10
+          # 5. Tambahkan fungsi pembantu Kernel 3.10
           cat << 'EOF' >> KernelSU/kernel/kernel_compat.c
-
           #include <linux/sort.h>
           #include <linux/dcache.h>
           #include <linux/fs.h>
-
           void ext4_unregister_sysfs(struct super_block *sb) {}
-
           #if LINUX_VERSION_CODE < KERNEL_VERSION(3, 18, 0)
           char *bin2hex(char *dst, const void *src, size_t count)
           {
@@ -104,7 +108,6 @@ jobs:
           		dst = hex_byte_pack(dst, *_src++);
           	return dst;
           }
-
           ssize_t strscpy(char *dest, const char *src, size_t count)
           {
           	long res = 0;
@@ -122,14 +125,12 @@ jobs:
           		dest[res - 1] = '\0';
           	return -E2BIG;
           }
-
           static int gid_cmp(const void *_a, const void *_b)
           {
           	kgid_t a = *(kgid_t *)_a;
           	kgid_t b = *(kgid_t *)_b;
           	return gid_gt(a, b) - gid_lt(a, b);
           }
-
           void groups_sort(struct group_info *group_info)
           {
           	int nblocks, i;
@@ -143,7 +144,6 @@ jobs:
           		count -= NGROUPS_PER_BLOCK;
           	}
           }
-
           bool d_is_reg(const struct dentry *dentry)
           {
           	return dentry && dentry->d_inode && S_ISREG(dentry->d_inode->i_mode);
@@ -190,5 +190,5 @@ jobs:
       - name: Upload KernelSU ZIP
         uses: actions/upload-artifact@v4
         with:
-          name: A37F-RKSU-Universal-Build
+          name: A37F-RKSU-True-Universal-Build
           path: out/A37F_KERNEL_ASU_*.zip
