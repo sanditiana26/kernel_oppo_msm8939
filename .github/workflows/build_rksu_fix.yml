@@ -1,4 +1,4 @@
-name: Build Oppo A37f Kernel with RKSU Legacy (True Universal)
+name: Build Oppo A37f Kernel with RKSU Legacy (True Universal v2)
 
 on:
   workflow_dispatch:
@@ -50,17 +50,16 @@ jobs:
           # 1b. Pastikan ksu.c mencetak log dmesg saat boot
           sed -i 's/ksu_core_init();/pr_info("KernelSU: kernelsu_init triggered!\\n"); ksu_core_init();/g' KernelSU/kernel/ksu.c
 
-          # 1c. Hook prctl universal (32-bit armv8l & 64-bit arm64)
+          # 1c. Hook prctl universal (fix sign-extension (u32)option + compat_ptr untuk 32-bit armv8l)
           sed -i '/#ifdef CONFIG_KSU/,/#endif/d' kernel/sys.c
-          sed -i 's/error = security_task_prctl(option, arg2, arg3, arg4, arg5);/#ifdef CONFIG_KSU\n\textern int ksu_handle_prctl(int option, unsigned long arg2, unsigned long arg3, unsigned long arg4, unsigned long arg5);\n\tif (is_compat_task())\n\t\tksu_handle_prctl(option, (unsigned long)(u32)arg2, (unsigned long)compat_ptr((u32)arg3), (unsigned long)compat_ptr((u32)arg4), (unsigned long)compat_ptr((u32)arg5));\n\telse\n\t\tksu_handle_prctl(option, arg2, arg3, arg4, arg5);\n#endif\n\terror = security_task_prctl(option, arg2, arg3, arg4, arg5);/' kernel/sys.c
+          sed -i 's/error = security_task_prctl(option, arg2, arg3, arg4, arg5);/#ifdef CONFIG_KSU\n\textern int ksu_handle_prctl(int option, unsigned long arg2, unsigned long arg3, unsigned long arg4, unsigned long arg5);\n\tif ((u32)option == 0xdeadbeef)\n\t\tpr_info("KernelSU: prctl 0xdeadbeef caught! compat=%d cmd=0x%lx\\n", is_compat_task(), arg2);\n\tif (is_compat_task())\n\t\tksu_handle_prctl((int)(u32)option, (unsigned long)(u32)arg2, (unsigned long)compat_ptr((u32)arg3), (unsigned long)compat_ptr((u32)arg4), (unsigned long)compat_ptr((u32)arg5));\n\telse\n\t\tksu_handle_prctl(option, arg2, arg3, arg4, arg5);\n#endif\n\terror = security_task_prctl(option, arg2, arg3, arg4, arg5);/' kernel/sys.c
 
-          # 1d. Patch core_hook.c untuk kompatibilitas 32-bit armv8l
+          # 1d. Patch core_hook.c untuk struktur & magic 32-bit armv8l
           sed -i 's/#include <linux\/slab.h>/#include <linux\/slab.h>\n#include <linux\/compat.h>/g' KernelSU/kernel/core_hook.c
           sed -i 's/if (magic2 != CHANGE_MANAGER_UID)/if ((u32)magic2 != CHANGE_MANAGER_UID)/g' KernelSU/kernel/core_hook.c
           sed -i 's/if (arg2 == EVENT_POST_FS_DATA)/if ((u32)arg2 == EVENT_POST_FS_DATA)/g' KernelSU/kernel/core_hook.c
           sed -i 's/if (arg2 == EVENT_BOOT_COMPLETED)/if ((u32)arg2 == EVENT_BOOT_COMPLETED)/g' KernelSU/kernel/core_hook.c
           sed -i 's/if (arg2 == EVENT_MODULE_MOUNTED)/if ((u32)arg2 == EVENT_MODULE_MOUNTED)/g' KernelSU/kernel/core_hook.c
-          sed -i 's/pr_info("option: 0x%x, cmd: 0x%lx\\n", option, arg2);/pr_info("KernelSU: prctl option: 0x%x, cmd: 0x%lx (compat=%d)\\n", option, arg2, is_compat_task());/g' KernelSU/kernel/core_hook.c
 
           # 1e. Aktifkan guard #ifdef CONFIG_KSU di semua file hook
           for hookfile in fs/exec.c fs/open.c fs/read_write.c fs/stat.c drivers/input/input.c kernel/sys.c; do
@@ -190,5 +189,5 @@ jobs:
       - name: Upload KernelSU ZIP
         uses: actions/upload-artifact@v4
         with:
-          name: A37F-RKSU-True-Universal-Build
+          name: A37F-RKSU-True-Universal-v2
           path: out/A37F_KERNEL_ASU_*.zip
