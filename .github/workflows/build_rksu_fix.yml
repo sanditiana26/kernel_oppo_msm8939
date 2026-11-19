@@ -49,17 +49,16 @@ jobs:
 
           # 1b. Pastikan ksu.c mencetak log dmesg saat boot
           sed -i 's/ksu_core_init();/pr_info("KernelSU: kernelsu_init triggered!\\n"); ksu_core_init();/g' KernelSU/kernel/ksu.c
-          # 1c. Ganti blok #ifdef CONFIG_KSU bawaan di SYSCALL_DEFINE5(prctl) kernel/sys.c (baris 2265-2267)
+          # 1c. Ganti blok ksu_handle_prctl di kernel/sys.c menggunakan regex presisi
           python3 -c '
+          import re
           with open("kernel/sys.c", "r") as f:
               content = f.read()
 
-          old_block = """#ifdef CONFIG_KSU
-          \tksu_handle_prctl(option, arg2, arg3, arg4, arg5);
-          #endif"""
+          pattern = r"#ifdef\s+CONFIG_KSU\s+ksu_handle_prctl\s*\(\s*option\s*,\s*arg2\s*,\s*arg3\s*,\s*arg4\s*,\s*arg5\s*\)\s*;\s*#endif"
+          assert re.search(pattern, content), "Blok ksu_handle_prctl di kernel/sys.c tidak ditemukan!"
 
-          new_block = """#ifdef CONFIG_KSU
-          \tif ((u32)option == 0xdeadbeef) {
+          new_block = """if ((u32)option == 0xdeadbeef) {
           \t\textern int ksu_handle_prctl(int option, unsigned long arg2, unsigned long arg3, unsigned long arg4, unsigned long arg5);
           \t\textern void escape_to_root(void);
           \t\tu32 ksu_ver = 12340;
@@ -67,6 +66,7 @@ jobs:
           \t\tvoid __user *p3 = is_compat_task() ? compat_ptr((u32)arg3) : (void __user *)arg3;
           \t\tvoid __user *p4 = is_compat_task() ? compat_ptr((u32)arg4) : (void __user *)arg4;
           \t\tvoid __user *p5 = is_compat_task() ? compat_ptr((u32)arg5) : (void __user *)arg5;
+          \t\tpr_info("KernelSU: prctl hit! cmd=%u compat=%d\\n", (u32)arg2, is_compat_task());
           \t\tksu_handle_prctl((int)(u32)option, (unsigned long)(u32)arg2, (unsigned long)p3, (unsigned long)p4, (unsigned long)p5);
           \t\tif ((u32)arg2 == 2) {
           \t\t\tif (p3 && copy_to_user(p3, &ksu_ver, sizeof(ksu_ver))) {}
@@ -77,18 +77,14 @@ jobs:
           \t\t\tif (p5 && copy_to_user(p5, &ksu_ok, sizeof(ksu_ok))) {}
           \t\t}
           \t\treturn 0;
-          \t}
-          #endif"""
+          \t}"""
 
-          assert old_block in content, "Blok ksu_handle_prctl di kernel/sys.c tidak ditemukan!"
-          content = content.replace(old_block, new_block, 1)
-
+          content = re.sub(pattern, new_block, content, count=1)
           with open("kernel/sys.c", "w") as f:
               f.write(content)
-          print("Berhasil mengganti blok CONFIG_KSU di kernel/sys.c!")
+          print("Sukses mengganti ksu_handle_prctl di kernel/sys.c!")
           '
 
-          
 
           # 1d. Patch core_hook.c & sucompat.c untuk 32-bit, auto-register Manager, & versi 12340
           sed -i 's/#include <linux\/slab.h>/#include <linux\/slab.h>\n#include <linux\/compat.h>/g' KernelSU/kernel/core_hook.c
