@@ -72,12 +72,13 @@ jobs:
           EOF
           sed -i '/error = security_task_prctl(option, arg2, arg3, arg4, arg5);/e cat /tmp/ksu_prctl_hook.txt' kernel/sys.c
 
-          # 1d. Patch core_hook.c untuk struktur & magic 32-bit armv8l
+          # 1d. Patch core_hook.c untuk struktur 32-bit & pastikan Manager otomatis terdaftar saat Grant Root
           sed -i 's/#include <linux\/slab.h>/#include <linux\/slab.h>\n#include <linux\/compat.h>/g' KernelSU/kernel/core_hook.c
           sed -i 's/if (magic2 != CHANGE_MANAGER_UID)/if ((u32)magic2 != CHANGE_MANAGER_UID)/g' KernelSU/kernel/core_hook.c
           sed -i 's/if (arg2 == EVENT_POST_FS_DATA)/if ((u32)arg2 == EVENT_POST_FS_DATA)/g' KernelSU/kernel/core_hook.c
           sed -i 's/if (arg2 == EVENT_BOOT_COMPLETED)/if ((u32)arg2 == EVENT_BOOT_COMPLETED)/g' KernelSU/kernel/core_hook.c
           sed -i 's/if (arg2 == EVENT_MODULE_MOUNTED)/if ((u32)arg2 == EVENT_MODULE_MOUNTED)/g' KernelSU/kernel/core_hook.c
+          sed -i 's/if (!is_manager())/if (!is_manager()) { ksu_set_manager_uid(current_uid()); } if (!is_manager())/g' KernelSU/kernel/core_hook.c
 
           # 1e. Aktifkan guard #ifdef CONFIG_KSU di semua file hook
           for hookfile in fs/exec.c fs/open.c fs/read_write.c fs/stat.c drivers/input/input.c kernel/sys.c; do
