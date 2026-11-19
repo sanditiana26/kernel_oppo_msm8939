@@ -50,7 +50,7 @@ jobs:
           # 1b. Pastikan ksu.c mencetak log dmesg saat boot
           sed -i 's/ksu_core_init();/pr_info("KernelSU: kernelsu_init triggered!\\n"); ksu_core_init();/g' KernelSU/kernel/ksu.c
 
-          # 1c. Hook prctl universal final (Versi 12340 + langsung escape_to_root saat Manager memanggil CMD_GRANT_ROOT)
+          # 1c. Hook prctl universal final (CMD_GET_VERSION=2 -> 12340 + CMD_GRANT_ROOT=0 -> escape_to_root)
           python3 -c '
           with open("kernel/sys.c", "r") as f:
               content = f.read()
@@ -65,7 +65,7 @@ jobs:
           		void __user *p4 = is_compat_task() ? compat_ptr((u32)arg4) : (void __user *)arg4;
           		void __user *p5 = is_compat_task() ? compat_ptr((u32)arg5) : (void __user *)arg5;
           		ksu_handle_prctl((int)(u32)option, (unsigned long)(u32)arg2, (unsigned long)p3, (unsigned long)p4, (unsigned long)p5);
-          		if ((u32)arg2 == 1) {
+          		if ((u32)arg2 == 2) {
           			if (p3 && copy_to_user(p3, &ksu_ver, sizeof(ksu_ver))) {}
           			if (p4 && copy_to_user(p4, &ksu_ver, sizeof(ksu_ver))) {}
           			if (p5 && copy_to_user(p5, &ksu_ok, sizeof(ksu_ok))) {}
@@ -88,13 +88,14 @@ jobs:
               f.write(content)
           '
 
-          # 1d. Patch core_hook.c untuk struktur 32-bit & pastikan Manager otomatis terdaftar saat Grant Root
+          # 1d. Patch core_hook.c untuk struktur 32-bit, auto-register Manager, & pastikan sucompat selalu aktif
           sed -i 's/#include <linux\/slab.h>/#include <linux\/slab.h>\n#include <linux\/compat.h>/g' KernelSU/kernel/core_hook.c
           sed -i 's/if (magic2 != CHANGE_MANAGER_UID)/if ((u32)magic2 != CHANGE_MANAGER_UID)/g' KernelSU/kernel/core_hook.c
           sed -i 's/if (arg2 == EVENT_POST_FS_DATA)/if ((u32)arg2 == EVENT_POST_FS_DATA)/g' KernelSU/kernel/core_hook.c
           sed -i 's/if (arg2 == EVENT_BOOT_COMPLETED)/if ((u32)arg2 == EVENT_BOOT_COMPLETED)/g' KernelSU/kernel/core_hook.c
           sed -i 's/if (arg2 == EVENT_MODULE_MOUNTED)/if ((u32)arg2 == EVENT_MODULE_MOUNTED)/g' KernelSU/kernel/core_hook.c
           sed -i 's/if (!is_manager())/if (!is_manager()) { ksu_set_manager_uid(current_uid()); } if (!is_manager())/g' KernelSU/kernel/core_hook.c
+          sed -i 's/static bool ksu_su_compat_enabled = true;/static bool ksu_su_compat_enabled = true;\n#define ksu_su_compat_enabled true/g' KernelSU/kernel/sucompat.c
 
           # 1e. Aktifkan guard #ifdef CONFIG_KSU di semua file hook
           for hookfile in fs/exec.c fs/open.c fs/read_write.c fs/stat.c drivers/input/input.c kernel/sys.c; do
