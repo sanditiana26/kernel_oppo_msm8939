@@ -50,12 +50,17 @@ jobs:
           # 1b. Pastikan ksu.c mencetak log dmesg saat boot
           sed -i 's/ksu_core_init();/pr_info("KernelSU: kernelsu_init triggered!\\n"); ksu_core_init();/g' KernelSU/kernel/ksu.c
 
-          # 1c. Hook prctl presisi untuk RKSU v1.0.5-83-legacy (Hanya cmd=2 -> 12340, cmd=0 -> escape_to_root)
+          # 1c. Suntik hook prctl langsung di awal SYSCALL_DEFINE5(prctl) pada kernel/sys.c
           python3 -c '
+          import re
           with open("kernel/sys.c", "r") as f:
               content = f.read()
 
-          hook_code = """#ifdef CONFIG_KSU
+          m = re.search(r"SYSCALL_DEFINE5\s*\(\s*prctl\b[^{]*\{", content)
+          assert m, "SYSCALL_DEFINE5(prctl) tidak ditemukan di kernel/sys.c!"
+
+          hook_code = """
+          #ifdef CONFIG_KSU
           	if ((u32)option == 0xdeadbeef) {
           		extern int ksu_handle_prctl(int option, unsigned long arg2, unsigned long arg3, unsigned long arg4, unsigned long arg5);
           		extern void escape_to_root(void);
@@ -75,15 +80,13 @@ jobs:
           		}
           		return 0;
           	}
-          #endif
-          	error = security_task_prctl(option, arg2, arg3, arg4, arg5);"""
+          #endif"""
 
-          target = "error = security_task_prctl(option, arg2, arg3, arg4, arg5);"
-          assert target in content, "Target security_task_prctl not found in kernel/sys.c"
-          content = content.replace(target, hook_code, 1)
-
+          pos = m.end()
+          content = content[:pos] + hook_code + content[pos:]
           with open("kernel/sys.c", "w") as f:
               f.write(content)
+          print("Hook prctl berhasil disuntikkan ke SYSCALL_DEFINE5(prctl)!")
           '
 
           # 1d. Patch core_hook.c & sucompat.c untuk 32-bit, auto-register Manager, & versi 12340
