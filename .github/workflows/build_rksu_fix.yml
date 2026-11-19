@@ -50,7 +50,7 @@ jobs:
           # 1b. Pastikan ksu.c mencetak log dmesg saat boot
           sed -i 's/ksu_core_init();/pr_info("KernelSU: kernelsu_init triggered!\\n"); ksu_core_init();/g' KernelSU/kernel/ksu.c
 
-          # 1c. Hook prctl universal (aman tanpa karakter & di sed)
+          # 1c. Hook prctl universal final (Versi 12340 & Grant Root penuh untuk 32-bit armv8l + 64-bit arm64)
           sed -i '/#ifdef CONFIG_KSU/,/#endif/d' kernel/sys.c
           cat << 'EOF' > /tmp/ksu_prctl_hook.txt
           #ifdef CONFIG_KSU
@@ -61,12 +61,12 @@ jobs:
           		void __user *p3 = is_compat_task() ? compat_ptr((u32)arg3) : (void __user *)arg3;
           		void __user *p4 = is_compat_task() ? compat_ptr((u32)arg4) : (void __user *)arg4;
           		void __user *p5 = is_compat_task() ? compat_ptr((u32)arg5) : (void __user *)arg5;
-          		if ((u32)arg2 == 1 && p3) {
-          			if (copy_to_user(p3, &ksu_ver, sizeof(ksu_ver))) {}
-          			if (p5 && copy_to_user(p5, &ksu_ok, sizeof(ksu_ok))) {}
-          			pr_info("KernelSU: replied version 12340 to manager (compat=%d)\n", is_compat_task());
-          		}
           		ksu_handle_prctl((int)(u32)option, (unsigned long)(u32)arg2, (unsigned long)p3, (unsigned long)p4, (unsigned long)p5);
+          		if ((u32)arg2 == 1) {
+          			if (p3 && copy_to_user(p3, &ksu_ver, sizeof(ksu_ver))) {}
+          			if (p4 && copy_to_user(p4, &ksu_ver, sizeof(ksu_ver))) {}
+          			if (p5 && copy_to_user(p5, &ksu_ok, sizeof(ksu_ok))) {}
+          		}
           	}
           #endif
           EOF
