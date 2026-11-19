@@ -73,7 +73,7 @@ jobs:
           		if ((u32)arg2 == 0) {
           			escape_to_root();
           			if (p5 && copy_to_user(p5, &ksu_ok, sizeof(ksu_ok))) {}
-          			pr_info("KernelSU: granted root to manager (uid=%u, compat=%d)\\n", current_uid().val, is_compat_task());
+          			pr_info("KernelSU: granted root to manager (uid=%u, compat=%d)\\n", from_kuid(&init_user_ns, current_uid()), is_compat_task());
           		}
           		return 0;
           	}
