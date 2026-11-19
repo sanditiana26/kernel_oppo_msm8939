@@ -50,11 +50,12 @@ jobs:
           # 1b. Pastikan ksu.c mencetak log dmesg saat boot
           sed -i 's/ksu_core_init();/pr_info("KernelSU: kernelsu_init triggered!\\n"); ksu_core_init();/g' KernelSU/kernel/ksu.c
 
-          # 1c. Hook prctl universal final (Versi 12340 & Grant Root penuh untuk 32-bit armv8l + 64-bit arm64)
+          # 1c. Hook prctl universal final (Versi 12340 + langsung escape_to_root saat Manager memanggil CMD_GRANT_ROOT)
           sed -i '/#ifdef CONFIG_KSU/,/#endif/d' kernel/sys.c
           cat << 'EOF' > /tmp/ksu_prctl_hook.txt
           #ifdef CONFIG_KSU
           	extern int ksu_handle_prctl(int option, unsigned long arg2, unsigned long arg3, unsigned long arg4, unsigned long arg5);
+          	extern void escape_to_root(void);
           	if ((u32)option == 0xdeadbeef) {
           		u32 ksu_ver = 12340;
           		u32 ksu_ok = 0xdeadbeef;
@@ -66,6 +67,11 @@ jobs:
           			if (p3 && copy_to_user(p3, &ksu_ver, sizeof(ksu_ver))) {}
           			if (p4 && copy_to_user(p4, &ksu_ver, sizeof(ksu_ver))) {}
           			if (p5 && copy_to_user(p5, &ksu_ok, sizeof(ksu_ok))) {}
+          		}
+          		if ((u32)arg2 == 0) {
+          			escape_to_root();
+          			if (p5 && copy_to_user(p5, &ksu_ok, sizeof(ksu_ok))) {}
+          			pr_info("KernelSU: granted root to manager (uid=%d, compat=%d)\n", current_uid(), is_compat_task());
           		}
           	}
           #endif
