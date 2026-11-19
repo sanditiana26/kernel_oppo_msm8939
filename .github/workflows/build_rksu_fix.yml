@@ -49,16 +49,12 @@ jobs:
 
           # 1b. Pastikan ksu.c mencetak log dmesg saat boot
           sed -i 's/ksu_core_init();/pr_info("KernelSU: kernelsu_init triggered!\\n"); ksu_core_init();/g' KernelSU/kernel/ksu.c
-          # 1c. Ganti blok ksu_handle_prctl di kernel/sys.c menggunakan regex presisi
+                    # 1c. Hook prctl di titik security_task_prctl yang terbukti terpanggil di Oppo A37f (32-bit compat)
           python3 -c '
-          import re
           with open("kernel/sys.c", "r") as f:
               content = f.read()
 
-          pattern = r"#ifdef\s+CONFIG_KSU\s+ksu_handle_prctl\s*\(\s*option\s*,\s*arg2\s*,\s*arg3\s*,\s*arg4\s*,\s*arg5\s*\)\s*;\s*#endif"
-          assert re.search(pattern, content), "Blok ksu_handle_prctl di kernel/sys.c tidak ditemukan!"
-
-          new_block = r"""if ((u32)option == 0xdeadbeef) {
+          hook_code = """if ((u32)option == 0xdeadbeef) {
           		extern int ksu_handle_prctl(int option, unsigned long arg2, unsigned long arg3, unsigned long arg4, unsigned long arg5);
           		extern void escape_to_root(void);
           		u32 ksu_ver = 12340;
@@ -66,7 +62,7 @@ jobs:
           		void __user *p3 = is_compat_task() ? compat_ptr((u32)arg3) : (void __user *)arg3;
           		void __user *p4 = is_compat_task() ? compat_ptr((u32)arg4) : (void __user *)arg4;
           		void __user *p5 = is_compat_task() ? compat_ptr((u32)arg5) : (void __user *)arg5;
-          		pr_info("KernelSU: prctl hit! cmd=%u compat=%d\n", (u32)arg2, is_compat_task());
+          		pr_info("KernelSU: prctl hit! cmd=%u compat=%d\\n", (u32)arg2, is_compat_task());
           		ksu_handle_prctl((int)(u32)option, (unsigned long)(u32)arg2, (unsigned long)p3, (unsigned long)p4, (unsigned long)p5);
           		if ((u32)arg2 == 2) {
           			if (p3 && copy_to_user(p3, &ksu_ver, sizeof(ksu_ver))) {}
@@ -75,14 +71,19 @@ jobs:
           		if ((u32)arg2 == 0) {
           			escape_to_root();
           			if (p5 && copy_to_user(p5, &ksu_ok, sizeof(ksu_ok))) {}
+          			pr_info("KernelSU: granted root to manager (uid=%u, compat=%d)\\n", from_kuid(&init_user_ns, current_uid()), is_compat_task());
           		}
           		return 0;
-          	}"""
+          	}
+          	error = security_task_prctl(option, arg2, arg3, arg4, arg5);"""
 
-          content = re.sub(pattern, lambda m: new_block, content, count=1)
+          target = "error = security_task_prctl(option, arg2, arg3, arg4, arg5);"
+          assert target in content, "Target security_task_prctl not found in kernel/sys.c"
+          content = content.replace(target, hook_code, 1)
+
           with open("kernel/sys.c", "w") as f:
               f.write(content)
-          print("Sukses mengganti ksu_handle_prctl di kernel/sys.c!")
+          print("Sukses memasang hook sebelum security_task_prctl!")
           '
 
           # 1d. Patch core_hook.c & sucompat.c untuk 32-bit, auto-register Manager, & versi 12340
