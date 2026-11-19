@@ -50,7 +50,7 @@ jobs:
           # 1b. Pastikan ksu.c mencetak log dmesg saat boot
           sed -i 's/ksu_core_init();/pr_info("KernelSU: kernelsu_init triggered!\\n"); ksu_core_init();/g' KernelSU/kernel/ksu.c
 
-                    # 1c. Hook prctl universal (CMD_GRANT_ROOT=0 -> escape_to_root)
+                    # 1c. Hook prctl universal final untuk RKSU v1.0.5-83-legacy (Versi 12340 + escape_to_root)
           python3 -c '
           with open("kernel/sys.c", "r") as f:
               content = f.read()
@@ -59,15 +59,21 @@ jobs:
           	if ((u32)option == 0xdeadbeef) {
           		extern int ksu_handle_prctl(int option, unsigned long arg2, unsigned long arg3, unsigned long arg4, unsigned long arg5);
           		extern void escape_to_root(void);
+          		u32 ksu_ver = 12340;
           		u32 ksu_ok = 0xdeadbeef;
           		void __user *p3 = is_compat_task() ? compat_ptr((u32)arg3) : (void __user *)arg3;
           		void __user *p4 = is_compat_task() ? compat_ptr((u32)arg4) : (void __user *)arg4;
           		void __user *p5 = is_compat_task() ? compat_ptr((u32)arg5) : (void __user *)arg5;
+          		pr_info("KernelSU: prctl hit! cmd=%u compat=%d\\n", (u32)arg2, is_compat_task());
           		ksu_handle_prctl((int)(u32)option, (unsigned long)(u32)arg2, (unsigned long)p3, (unsigned long)p4, (unsigned long)p5);
           		if ((u32)arg2 == 0) {
           			escape_to_root();
           			if (p5 && copy_to_user(p5, &ksu_ok, sizeof(ksu_ok))) {}
           			pr_info("KernelSU: granted root to manager (uid=%u, compat=%d)\\n", from_kuid(&init_user_ns, current_uid()), is_compat_task());
+          		} else {
+          			if (p3 && copy_to_user(p3, &ksu_ver, sizeof(ksu_ver))) {}
+          			if (p4 && copy_to_user(p4, &ksu_ver, sizeof(ksu_ver))) {}
+          			if (p5 && copy_to_user(p5, &ksu_ok, sizeof(ksu_ok))) {}
           		}
           		return 0;
           	}
@@ -82,14 +88,16 @@ jobs:
               f.write(content)
           '
 
-          # 1d. Patch core_hook.c untuk struktur 32-bit, auto-register Manager, & pastikan sucompat selalu aktif
+          # 1d. Patch core_hook.c & sucompat.c untuk 32-bit, auto-register Manager, & versi 12340
           sed -i 's/#include <linux\/slab.h>/#include <linux\/slab.h>\n#include <linux\/compat.h>/g' KernelSU/kernel/core_hook.c
+          sed -i 's/u32 version = KERNEL_SU_VERSION;/u32 version = 12340;/g' KernelSU/kernel/core_hook.c
           sed -i 's/if (magic2 != CHANGE_MANAGER_UID)/if ((u32)magic2 != CHANGE_MANAGER_UID)/g' KernelSU/kernel/core_hook.c
           sed -i 's/if (arg2 == EVENT_POST_FS_DATA)/if ((u32)arg2 == EVENT_POST_FS_DATA)/g' KernelSU/kernel/core_hook.c
           sed -i 's/if (arg2 == EVENT_BOOT_COMPLETED)/if ((u32)arg2 == EVENT_BOOT_COMPLETED)/g' KernelSU/kernel/core_hook.c
           sed -i 's/if (arg2 == EVENT_MODULE_MOUNTED)/if ((u32)arg2 == EVENT_MODULE_MOUNTED)/g' KernelSU/kernel/core_hook.c
           sed -i 's/if (!is_manager())/if (!is_manager()) { ksu_set_manager_uid(current_uid()); } if (!is_manager())/g' KernelSU/kernel/core_hook.c
           sed -i 's/static bool ksu_su_compat_enabled = true;/static bool ksu_su_compat_enabled = true;\n#define ksu_su_compat_enabled true/g' KernelSU/kernel/sucompat.c
+
 
           # 1e. Aktifkan guard #ifdef CONFIG_KSU di semua file hook
           for hookfile in fs/exec.c fs/open.c fs/read_write.c fs/stat.c drivers/input/input.c kernel/sys.c; do
@@ -98,34 +106,7 @@ jobs:
             fi
           done
 
-          # 1f. Pasang hook sys_reboot untuk RKSU v1.0.5 (mengatasi Versi kernel -1)
-          python3 -c '
-          with open("kernel/sys.c", "r") as f:
-              content = f.read()
-
-          reboot_target = "SYSCALL_DEFINE4(reboot, int, magic1, int, magic2, unsigned int, cmd,"
-          assert reboot_target in content, "SYSCALL_DEFINE4(reboot) tidak ditemukan di kernel/sys.c"
-
-          idx = content.index(reboot_target)
-          brace_idx = content.index("{", idx) + 1
-
-          reboot_hook = """
-          #ifdef CONFIG_KSU
-          	if ((u32)magic1 == 0xdeadbeef && (u32)magic2 == 0xCAFEBABE) {
-          		u32 ksu_ver = 12340;
-          		void __user *uarg = is_compat_task() ? compat_ptr((u32)(unsigned long)arg) : arg;
-          		pr_info("KernelSU: sys_reboot hook hit! cmd=%u compat=%d\\n", cmd, is_compat_task());
-          		if (cmd == 2 && uarg) {
-          			if (copy_to_user(uarg, &ksu_ver, sizeof(ksu_ver))) {}
-          		}
-          		return 0;
-          	}
-          #endif"""
-
-          content = content[:brace_idx] + reboot_hook + content[brace_idx:]
-          with open("kernel/sys.c", "w") as f:
-              f.write(content)
-          '
+          
 
           # 2. Fix error 'request for member val' pada Kernel 3.10
           find KernelSU/kernel -type f \( -name "*.c" -o -name "*.h" \) -exec sed -i \
