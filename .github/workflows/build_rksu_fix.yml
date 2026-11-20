@@ -182,6 +182,110 @@ jobs:
           		memcpy(cprof->rp_config.template_name, prof->rp_config.template_name, sizeof(cprof->rp_config.template_name));
           		cprof->rp_config.profile.uid = prof->rp_config.profile.uid;
           		cprof->rp_config.profile.gid = prof->rp_config.profile.gid;
+
+          # 1e. Aktifkan guard #ifdef CONFIG_KSU di semua file hook
+          for hookfile in fs/exec.c fs/open.c fs/read_write.c fs/stat.c drivers/input/input.c kernel/sys.c; do
+            if [ -f "$hookfile" ]; then
+              sed -i 's/#ifdef CONFIG_KSU_MANUAL_HOOK/#ifdef CONFIG_KSU/g' "$hookfile"
+            fi
+          done
+          # 1d. Patch core_hook.c untuk 32-bit compat App Profile (cmd=9/10 atau 13/14) & Manager UID
+          python3 -c '
+          import re
+
+          with open("KernelSU/kernel/core_hook.c", "r") as f:
+              code = f.read()
+
+          code = code.replace("#include <linux/slab.h>", "#include <linux/slab.h>\n#include <linux/compat.h>", 1)
+          code = code.replace("u32 version = KERNEL_SU_VERSION;", "u32 version = 12340;")
+          code = code.replace("if (magic2 != CHANGE_MANAGER_UID)", "if ((u32)magic2 != CHANGE_MANAGER_UID)")
+          code = code.replace("if (arg2 == EVENT_POST_FS_DATA)", "if ((u32)arg2 == EVENT_POST_FS_DATA)")
+          code = code.replace("if (arg2 == EVENT_BOOT_COMPLETED)", "if ((u32)arg2 == EVENT_BOOT_COMPLETED)")
+          code = code.replace("if (arg2 == EVENT_MODULE_MOUNTED)", "if ((u32)arg2 == EVENT_MODULE_MOUNTED)")
+
+          # Paksa auto-register manager UID pada semua titik pengecekan is_manager()
+          code, mgr_hits = re.subn(
+              r"if\s*\(\s*!is_manager\s*\(\s*\)\s*\)",
+              "if (!is_manager() && from_kuid(&init_user_ns, current_uid()) >= 10000) { ksu_set_manager_uid(from_kuid(&init_user_ns, current_uid())); } if (!is_manager())",
+              code
+          )
+          print(f"Total pengecekan is_manager() dipatch: {mgr_hits}")
+
+          compat_helpers = """
+          #ifdef CONFIG_COMPAT
+          struct compat_root_profile {
+          	int32_t uid;
+          	int32_t gid;
+          	int32_t groups_count;
+          	int32_t groups[KSU_MAX_GROUPS];
+          	struct {
+          		uint64_t effective;
+          		uint64_t permitted;
+          		uint64_t inheritable;
+          	} __attribute__((packed)) capabilities;
+          	char selinux_domain[KSU_SELINUX_DOMAIN];
+          	int32_t namespaces;
+          } __attribute__((packed));
+
+          struct compat_non_root_profile {
+          	bool umount_modules;
+          } __attribute__((packed));
+
+          struct compat_app_profile {
+          	uint32_t version;
+          	char key[KSU_MAX_PACKAGE_NAME];
+          	int32_t current_uid;
+          	bool allow_su;
+          	union {
+          		struct {
+          			bool use_default;
+          			char template_name[KSU_MAX_PACKAGE_NAME];
+          			struct compat_root_profile profile;
+          		} __attribute__((packed)) rp_config;
+          		struct {
+          			bool use_default;
+          			struct compat_non_root_profile profile;
+          		} __attribute__((packed)) nrp_config;
+          	} __attribute__((packed));
+          } __attribute__((packed));
+
+          static void compat_to_app_profile(const struct compat_app_profile *cprof, struct app_profile *prof)
+          {
+          	memset(prof, 0, sizeof(*prof));
+          	prof->version = cprof->version;
+          	memcpy(prof->key, cprof->key, sizeof(prof->key));
+          	prof->current_uid = cprof->current_uid;
+          	prof->allow_su = cprof->allow_su;
+          	if (cprof->allow_su) {
+          		prof->rp_config.use_default = cprof->rp_config.use_default;
+          		memcpy(prof->rp_config.template_name, cprof->rp_config.template_name, sizeof(prof->rp_config.template_name));
+          		prof->rp_config.profile.uid = cprof->rp_config.profile.uid;
+          		prof->rp_config.profile.gid = cprof->rp_config.profile.gid;
+          		prof->rp_config.profile.groups_count = cprof->rp_config.profile.groups_count;
+          		memcpy(prof->rp_config.profile.groups, cprof->rp_config.profile.groups, sizeof(prof->rp_config.profile.groups));
+          		prof->rp_config.profile.capabilities.effective = cprof->rp_config.profile.capabilities.effective;
+          		prof->rp_config.profile.capabilities.permitted = cprof->rp_config.profile.capabilities.permitted;
+          		prof->rp_config.profile.capabilities.inheritable = cprof->rp_config.profile.capabilities.inheritable;
+          		memcpy(prof->rp_config.profile.selinux_domain, cprof->rp_config.profile.selinux_domain, sizeof(prof->rp_config.profile.selinux_domain));
+          		prof->rp_config.profile.namespaces = cprof->rp_config.profile.namespaces;
+          	} else {
+          		prof->nrp_config.use_default = cprof->nrp_config.use_default;
+          		prof->nrp_config.profile.umount_modules = cprof->nrp_config.profile.umount_modules;
+          	}
+          }
+
+          static void app_profile_to_compat(const struct app_profile *prof, struct compat_app_profile *cprof)
+          {
+          	memset(cprof, 0, sizeof(*cprof));
+          	cprof->version = prof->version;
+          	memcpy(cprof->key, prof->key, sizeof(cprof->key));
+          	cprof->current_uid = prof->current_uid;
+          	cprof->allow_su = prof->allow_su;
+          	if (prof->allow_su) {
+          		cprof->rp_config.use_default = prof->rp_config.use_default;
+          		memcpy(cprof->rp_config.template_name, prof->rp_config.template_name, sizeof(cprof->rp_config.template_name));
+          		cprof->rp_config.profile.uid = prof->rp_config.profile.uid;
+          		cprof->rp_config.profile.gid = prof->rp_config.profile.gid;
           		cprof->rp_config.profile.groups_count = prof->rp_config.profile.groups_count;
           		memcpy(cprof->rp_config.profile.groups, prof->rp_config.profile.groups, sizeof(cprof->rp_config.profile.groups));
           		cprof->rp_config.profile.capabilities.effective = prof->rp_config.profile.capabilities.effective;
@@ -199,7 +303,7 @@ jobs:
 
           code = code.replace("int ksu_handle_prctl(", compat_helpers + "\nint ksu_handle_prctl(", 1)
 
-          # 1. Patch semua copy_from_user(&profile, ...) untuk CMD_GET_APP_PROFILE & CMD_SET_APP_PROFILE
+          # Tangkap semua variasi copy_from_user(&profile, PTR, sizeof(...))
           def repl_copy_from(m):
               src_ptr = m.group(1)
               return f"""({{
@@ -220,13 +324,11 @@ jobs:
           	}})"""
 
           code, count_from = re.subn(
-              r"copy_from_user\s*\(\s*&profile\s*,\s*([^,]+)\s*,\s*sizeof\s*\(\s*profile\s*\)\s*\)",
+              r"copy_from_user\s*\(\s*&profile\s*,\s*([^,]+)\s*,\s*sizeof\s*\([^)]+\)\s*\)",
               repl_copy_from,
               code
           )
-          assert count_from >= 1, "Tidak menemukan copy_from_user(&profile, ...)"
 
-          # 2. Patch copy_to_user(..., &profile, sizeof(profile)) untuk CMD_GET_APP_PROFILE (cmd=13)
           def repl_copy_to(m):
               dst_ptr = m.group(1)
               return f"""({{
@@ -246,25 +348,21 @@ jobs:
           	}})"""
 
           code, count_to = re.subn(
-              r"copy_to_user\s*\(\s*([^,]+)\s*,\s*&profile\s*,\s*sizeof\s*\(\s*profile\s*\)\s*\)",
+              r"copy_to_user\s*\(\s*([^,]+)\s*,\s*&profile\s*,\s*sizeof\s*\([^)]+\)\s*\)",
               repl_copy_to,
               code
           )
-          print(f"Sukses patch core_hook.c: {count_from} copy_from_user & {count_to} copy_to_user!")
+
+          print(f"DEBUG PATCH: count_from={count_from}, count_to={count_to}")
+          for line in code.splitlines():
+              if "profile" in line and ("copy_" in line or "CMD_" in line):
+                  print("LINE:", line.strip())
+          assert count_from >= 1 and count_to >= 1, "Gagal patch copy_from_user / copy_to_user pada profile!"
 
           with open("KernelSU/kernel/core_hook.c", "w") as f:
               f.write(code)
           '
           sed -i 's/static bool ksu_su_compat_enabled = true;/static bool ksu_su_compat_enabled = true;\n#define ksu_su_compat_enabled true/g' KernelSU/kernel/sucompat.c
-
-
-
-          # 1e. Aktifkan guard #ifdef CONFIG_KSU di semua file hook
-          for hookfile in fs/exec.c fs/open.c fs/read_write.c fs/stat.c drivers/input/input.c kernel/sys.c; do
-            if [ -f "$hookfile" ]; then
-              sed -i 's/#ifdef CONFIG_KSU_MANUAL_HOOK/#ifdef CONFIG_KSU/g' "$hookfile"
-            fi
-          done
 
           
           # 1f. Daftarkan syscall 384 (getrandom) & tambahkan sys_renameat2 (syscall 391) di ARM 32-bit compat
