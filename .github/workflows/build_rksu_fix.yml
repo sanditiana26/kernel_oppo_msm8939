@@ -112,7 +112,8 @@ jobs:
             fi
           done
 
-          # 1f. Tambahkan sys_getrandom (syscall 384) & sys_renameat2 (syscall 391) di ARM 32-bit compat
+          
+          # 1f. Daftarkan syscall 384 (getrandom) & tambahkan sys_renameat2 (syscall 391) di ARM 32-bit compat
           python3 -c '
           import re
 
@@ -135,45 +136,14 @@ jobs:
               with open("fs/namei.c", "w") as f:
                   f.write(namei)
 
-          with open("drivers/char/random.c", "r") as f:
-              rnd = f.read()
-
-          if "sys_getrandom" not in rnd:
-              getrandom_code = """
-          SYSCALL_DEFINE3(getrandom, char __user *, buf, size_t, count, unsigned int, flags)
-          {
-          	char *kbuf;
-          	if (flags & ~(0x0001 | 0x0002))
-          		return -EINVAL;
-          	if (count > 256)
-          		count = 256;
-          	kbuf = kmalloc(count, GFP_KERNEL);
-          	if (!kbuf)
-          		return -ENOMEM;
-          	get_random_bytes(kbuf, count);
-          	if (copy_to_user(buf, kbuf, count)) {
-          		kfree(kbuf);
-          		return -EFAULT;
-          	}
-          	kfree(kbuf);
-          	return count;
-          }
-          """
-              rnd = rnd + "\n" + getrandom_code
-              with open("drivers/char/random.c", "w") as f:
-                  f.write(rnd)
-
           with open("include/linux/syscalls.h", "r") as f:
               syscalls_h = f.read()
 
-          for decl in [
-              "asmlinkage long sys_renameat2(int olddfd, const char __user *oldname, int newdfd, const char __user *newname, unsigned int flags);\n",
-              "asmlinkage long sys_getrandom(char __user *buf, size_t count, unsigned int flags);\n"
-          ]:
-              if decl.split("(")[0] not in syscalls_h:
-                  syscalls_h = syscalls_h.replace("#endif", decl + "#endif", 1)
-          with open("include/linux/syscalls.h", "w") as f:
-              f.write(syscalls_h)
+          if "sys_renameat2" not in syscalls_h:
+              decl = "asmlinkage long sys_renameat2(int olddfd, const char __user *oldname, int newdfd, const char __user *newname, unsigned int flags);\n"
+              syscalls_h = syscalls_h.replace("#endif", decl + "#endif", 1)
+              with open("include/linux/syscalls.h", "w") as f:
+                  f.write(syscalls_h)
 
           with open("arch/arm64/include/asm/unistd32.h", "r") as f:
               unistd32 = f.read()
@@ -196,7 +166,7 @@ jobs:
 
           with open("arch/arm64/include/asm/unistd32.h", "w") as f:
               f.write(unistd32)
-          print("Sukses menambahkan sys_getrandom (384) & sys_renameat2 (391)!")
+          print("Sukses mendaftarkan syscall 384 & 391!")
           '
 
 
