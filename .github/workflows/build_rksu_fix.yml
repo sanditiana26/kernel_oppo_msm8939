@@ -112,7 +112,52 @@ jobs:
             fi
           done
 
-          
+          # 1f. Tambahkan sys_renameat2 (syscall 391 di ARM 32-bit compat) agar libksud.so bisa menyimpan profil
+          python3 -c '
+          import re
+
+          with open("fs/namei.c", "r") as f:
+              namei = f.read()
+
+          if "sys_renameat2" not in namei:
+              renameat2_code = """
+          SYSCALL_DEFINE5(renameat2, int, olddfd, const char __user *, oldname,
+          		int, newdfd, const char __user *, newname, unsigned int, flags)
+          {
+          	if (flags != 0)
+          		return -EINVAL;
+          	return sys_renameat(olddfd, oldname, newdfd, newname);
+          }
+          """
+              target_fn = "SYSCALL_DEFINE4(renameat"
+              assert target_fn in namei, "SYSCALL_DEFINE4(renameat) tidak ditemukan di fs/namei.c"
+              namei = namei.replace(target_fn, renameat2_code + "\n" + target_fn, 1)
+              with open("fs/namei.c", "w") as f:
+                  f.write(namei)
+              print("Sukses menambahkan sys_renameat2 di fs/namei.c")
+
+          with open("include/linux/syscalls.h", "r") as f:
+              syscalls_h = f.read()
+
+          if "sys_renameat2" not in syscalls_h:
+              decl = "asmlinkage long sys_renameat2(int olddfd, const char __user *oldname, int newdfd, const char __user *newname, unsigned int flags);\n"
+              syscalls_h = syscalls_h.replace("#endif", decl + "#endif", 1)
+              with open("include/linux/syscalls.h", "w") as f:
+                  f.write(syscalls_h)
+              print("Sukses menambahkan deklarasi sys_renameat2 di include/linux/syscalls.h")
+
+          with open("arch/arm64/include/asm/unistd32.h", "r") as f:
+              unistd32 = f.read()
+
+          if "__NR_renameat2" not in unistd32:
+              entry = "#define __NR_renameat2 391\n__SYSCALL(__NR_renameat2, sys_renameat2)\n"
+              assert "__NR_syscalls" in unistd32, "__NR_syscalls tidak ditemukan di unistd32.h"
+              unistd32 = re.sub(r"#define __NR_syscalls\s+\d+", entry + "#define __NR_syscalls 392", unistd32, count=1)
+              with open("arch/arm64/include/asm/unistd32.h", "w") as f:
+                  f.write(unistd32)
+              print("Sukses mendaftarkan syscall 391 (__NR_renameat2) di unistd32.h")
+          '
+
 
           # 2. Fix error 'request for member val' pada Kernel 3.10
           find KernelSU/kernel -type f \( -name "*.c" -o -name "*.h" \) -exec sed -i \
