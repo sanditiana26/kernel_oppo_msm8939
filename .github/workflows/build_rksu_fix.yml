@@ -95,14 +95,7 @@ jobs:
           # 1d. Patch core_hook.c untuk 32-bit compat App Profile & Manager UID
           python3 << 'EOF'
           import re
-          # Pastikan CMD_IS_SU_ENABLED selalu mengembalikan true ke RKSU Manager
-          code, su_en_hits = re.subn(
-              r"copy_to_user\s*\(\s*([^,]+)\s*,\s*&ksu_su_compat_enabled\s*,\s*sizeof\s*\([^)]+\)\s*\)",
-              r'({ bool __su_on = true; pr_info("KernelSU: CMD_IS_SU_ENABLED -> true\\n"); copy_to_user(\1, &__su_on, sizeof(__su_on)); })',
-              code
-          )
-          print(f"Total CMD_IS_SU_ENABLED dipatch: {su_en_hits}")
-
+          
           with open("KernelSU/kernel/core_hook.c", "r") as f:
               code = f.read()
 
@@ -124,10 +117,7 @@ jobs:
           	{
           		uid_t __cuid = from_kuid(&init_user_ns, current_uid());
           		if (__cuid >= 10000 && (u32)arg2 != 0 && (u32)arg2 != 1 && (u32)arg2 != 2) {
-          			if (ksu_get_manager_uid() != __cuid) {
-          				ksu_set_manager_uid(__cuid);
-          				pr_info("KernelSU: manager UID bound to %u (cmd=%lu)\\n", __cuid, arg2);
-          			}
+          			
           		}
           	}
           """
@@ -288,6 +278,13 @@ jobs:
               if "profile" in line and ("copy_" in line or "CMD_" in line):
                   print("LINE:", line.strip())
           assert count_from >= 1 and count_to >= 1, "Gagal patch copy_from_user / copy_to_user pada profile!"
+          # Pastikan CMD_IS_SU_ENABLED selalu mengembalikan true ke RKSU Manager
+          code, su_en_hits = re.subn(
+              r"copy_to_user\s*\(\s*([^,]+)\s*,\s*&ksu_su_compat_enabled\s*,\s*sizeof\s*\([^)]+\)\s*\)",
+              r'({ bool __su_on = true; pr_info("KernelSU: CMD_IS_SU_ENABLED -> true\\n"); copy_to_user(\1, &__su_on, sizeof(__su_on)); })',
+              code
+          )
+          print(f"Total CMD_IS_SU_ENABLED dipatch: {su_en_hits}")
 
           with open("KernelSU/kernel/core_hook.c", "w") as f:
               f.write(code)
