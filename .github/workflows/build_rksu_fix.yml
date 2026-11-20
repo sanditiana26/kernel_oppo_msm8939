@@ -95,6 +95,13 @@ jobs:
           # 1d. Patch core_hook.c untuk 32-bit compat App Profile & Manager UID
           python3 << 'EOF'
           import re
+                    # Pastikan CMD_IS_SU_ENABLED selalu mengembalikan true ke RKSU Manager
+          code, su_en_hits = re.subn(
+              r"copy_to_user\s*\(\s*([^,]+)\s*,\s*&ksu_su_compat_enabled\s*,\s*sizeof\s*\([^)]+\)\s*\)",
+              r'({ bool __su_on = true; pr_info("KernelSU: CMD_IS_SU_ENABLED -> true\\n"); copy_to_user(\1, &__su_on, sizeof(__su_on)); })',
+              code
+          )
+          print(f"Total CMD_IS_SU_ENABLED dipatch: {su_en_hits}")
 
           with open("KernelSU/kernel/core_hook.c", "r") as f:
               code = f.read()
