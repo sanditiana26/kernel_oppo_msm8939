@@ -74,8 +74,10 @@ jobs:
               f.write(content)
           print("Sukses memasang hook sebelum security_task_prctl!")
           '
-                    # 1d. Patch core_hook.c & sucompat.c untuk 32-bit compat struct app_profile, Manager UID, & sucompat
+          # 1d. Patch core_hook.c & sucompat.c untuk 32-bit compat struct app_profile, Manager UID, & sucompat
           python3 -c '
+          import re
+
           with open("KernelSU/kernel/core_hook.c", "r") as f:
               code = f.read()
 
@@ -149,19 +151,27 @@ jobs:
 
           code = code.replace("int ksu_handle_prctl(", compat_struct_def + "\nint ksu_handle_prctl(", 1)
 
-          old_set_profile = "if (copy_from_user(&profile, (void __user *)arg3, sizeof(profile))) {"
-          new_set_profile = """int copy_err = 0;
+          pattern = r"if\s*\(\s*copy_from_user\s*\(\s*&profile\s*,\s*([^,]+)\s*,\s*sizeof\s*\(\s*profile\s*\)\s*\)\s*\)\s*\{"
+          m = re.search(pattern, code)
+          if not m:
+              for line in code.splitlines():
+                  if "copy_from_user" in line and "profile" in line:
+                      print("BARIS DITEMUKAN:", line)
+              raise AssertionError("Pola copy_from_user CMD_SET_APP_PROFILE tidak ditemukan!")
+
+          src_ptr = m.group(1)
+          new_set_profile = f"""int copy_err = 0;
           #ifdef CONFIG_COMPAT
-          		if (is_compat_task()) {
+          		if (is_compat_task()) {{
           			struct compat_app_profile cprof;
-          			copy_err = copy_from_user(&cprof, (void __user *)arg3, sizeof(cprof));
-          			if (!copy_err) {
+          			copy_err = copy_from_user(&cprof, {src_ptr}, sizeof(cprof));
+          			if (!copy_err) {{
           				memset(&profile, 0, sizeof(profile));
           				profile.version = cprof.version;
           				memcpy(profile.key, cprof.key, sizeof(profile.key));
           				profile.current_uid = cprof.current_uid;
           				profile.allow_su = cprof.allow_su;
-          				if (cprof.allow_su) {
+          				if (cprof.allow_su) {{
           					profile.rp_config.use_default = cprof.rp_config.use_default;
           					memcpy(profile.rp_config.template_name, cprof.rp_config.template_name, sizeof(profile.rp_config.template_name));
           					profile.rp_config.profile.uid = cprof.rp_config.profile.uid;
@@ -173,27 +183,26 @@ jobs:
           					profile.rp_config.profile.capabilities.inheritable = cprof.rp_config.profile.capabilities.inheritable;
           					memcpy(profile.rp_config.profile.selinux_domain, cprof.rp_config.profile.selinux_domain, sizeof(profile.rp_config.profile.selinux_domain));
           					profile.rp_config.profile.namespaces = cprof.rp_config.profile.namespaces;
-          				} else {
+          				}} else {{
           					profile.nrp_config.use_default = cprof.nrp_config.use_default;
           					profile.nrp_config.profile.umount_modules = cprof.nrp_config.profile.umount_modules;
-          				}
-          			}
-          		} else
+          				}}
+          			}}
+          		}} else
           #endif
-          		{
-          			copy_err = copy_from_user(&profile, (void __user *)arg3, sizeof(profile));
-          		}
+          		{{
+          			copy_err = copy_from_user(&profile, {src_ptr}, sizeof(profile));
+          		}}
           		pr_info("KernelSU: CMD_SET_APP_PROFILE copy_err=%d key=%s uid=%d allow_su=%d\\n", copy_err, profile.key, profile.current_uid, profile.allow_su);
-          		if (copy_err) {"""
+          		if (copy_err) {{"""
 
-          assert old_set_profile in code, "Pola copy_from_user CMD_SET_APP_PROFILE tidak ditemukan!"
-          code = code.replace(old_set_profile, new_set_profile, 1)
+          code = code[:m.start()] + new_set_profile + code[m.end():]
 
           with open("KernelSU/kernel/core_hook.c", "w") as f:
               f.write(code)
           print("Sukses patch core_hook.c untuk 32-bit & 64-bit App Profile!")
           '
-          sed -i 's/static bool ksu_su_compat_enabled = true;/static bool ksu_su_compat_enabled = true;\n#define ksu_su_compat_enabled true/g' KernelSU/kernel/sucompat.c
+
 
           # 1e. Aktifkan guard #ifdef CONFIG_KSU di semua file hook
           for hookfile in fs/exec.c fs/open.c fs/read_write.c fs/stat.c drivers/input/input.c kernel/sys.c; do
