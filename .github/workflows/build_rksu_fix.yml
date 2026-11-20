@@ -72,6 +72,7 @@ jobs:
           			return 0;
           		}
           		if (cmd == 0) {
+          			ksu_handle_prctl((int)(u32)option, 0, (unsigned long)(u32)arg3, (unsigned long)(u32)arg4, (unsigned long)(u32)arg5);
           			escape_to_root();
           			if (p5 && copy_to_user(p5, &ksu_ok, sizeof(ksu_ok)))
           				pr_warn("KernelSU: copy magic cmd0 failed\\n");
@@ -93,14 +94,14 @@ jobs:
           print("Sukses memasang hook sebelum security_task_prctl!")
           '
 
-          # 1d. Patch core_hook.c & sucompat.c untuk 32-bit, auto-register Manager, & versi 12340
+          # 1d. Patch core_hook.c & sucompat.c untuk 32-bit, auto-register Manager, & App Profile
           sed -i 's/#include <linux\/slab.h>/#include <linux\/slab.h>\n#include <linux\/compat.h>/g' KernelSU/kernel/core_hook.c
           sed -i 's/u32 version = KERNEL_SU_VERSION;/u32 version = 12340;/g' KernelSU/kernel/core_hook.c
           sed -i 's/if (magic2 != CHANGE_MANAGER_UID)/if ((u32)magic2 != CHANGE_MANAGER_UID)/g' KernelSU/kernel/core_hook.c
           sed -i 's/if (arg2 == EVENT_POST_FS_DATA)/if ((u32)arg2 == EVENT_POST_FS_DATA)/g' KernelSU/kernel/core_hook.c
           sed -i 's/if (arg2 == EVENT_BOOT_COMPLETED)/if ((u32)arg2 == EVENT_BOOT_COMPLETED)/g' KernelSU/kernel/core_hook.c
           sed -i 's/if (arg2 == EVENT_MODULE_MOUNTED)/if ((u32)arg2 == EVENT_MODULE_MOUNTED)/g' KernelSU/kernel/core_hook.c
-          sed -i 's/if (!is_manager())/if (!is_manager()) { ksu_set_manager_uid(current_uid()); } if (!is_manager())/g' KernelSU/kernel/core_hook.c
+          sed -i 's/if (!is_manager())/if (!is_manager()) { ksu_set_manager_uid(from_kuid(\&init_user_ns, current_uid())); } if (!is_manager())/g' KernelSU/kernel/core_hook.c
           sed -i 's/static bool ksu_su_compat_enabled = true;/static bool ksu_su_compat_enabled = true;\n#define ksu_su_compat_enabled true/g' KernelSU/kernel/sucompat.c
 
 
