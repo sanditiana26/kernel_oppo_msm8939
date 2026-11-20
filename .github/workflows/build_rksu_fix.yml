@@ -112,6 +112,23 @@ jobs:
               code
           )
           print(f"Total pengecekan is_manager() dipatch: {mgr_hits}")
+          # Tangkap pengecekan manager UID di rsuntk/KernelSU (ksu_manager_uid / is_manager_uid)
+          code, mgr_uid_hits = re.subn(
+              r"(if\s*\([^\n;]*manager_uid[^\n;]*\)\s*\{)",
+              r"""{
+          		uid_t __cuid = from_kuid(&init_user_ns, current_uid());
+          		if (__cuid >= 10000 && ksu_get_manager_uid() != __cuid) {
+          			ksu_set_manager_uid(__cuid);
+          			pr_info("KernelSU: manager UID updated to %u\\n", __cuid);
+          		}
+          	}
+          	\1""",
+              code
+          )
+          print(f"Total pengecekan manager_uid dipatch: {mgr_uid_hits}")
+          for line in code.splitlines():
+              if "manager" in line and ("if" in line or "uid" in line):
+                  print("MGR LINE:", line.strip())
 
           compat_helpers = """
           #ifdef CONFIG_COMPAT
