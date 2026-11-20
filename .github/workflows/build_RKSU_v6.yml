@@ -210,7 +210,8 @@ jobs:
               sed -i 's/#ifdef CONFIG_KSU_MANUAL_HOOK/#ifdef CONFIG_KSU/g' "$hookfile"
             fi
           done
-                    # 1f. Daftarkan syscall 382 (renameat2) & 384 (getrandom) secara berurutan tanpa celah di ARM 32-bit compat
+
+          # 1f. Daftarkan syscall 382 (renameat2) & 384 (getrandom) secara berurutan tanpa celah di ARM 32-bit compat
           python3 -c '
           import re
 
@@ -245,26 +246,32 @@ jobs:
           with open("arch/arm64/include/asm/unistd32.h", "r") as f:
               unistd32 = f.read()
 
-          m = re.search(r"#define __NR_syscalls\s+(\d+)", unistd32)
-          assert m, "__NR_syscalls tidak ditemukan di unistd32.h"
-          cur_nr = int(m.group(1))
+          nums = [int(x) for x in re.findall(r"#define\s+__NR_\w+\s+(\d+)", unistd32)]
+          assert nums, "Tidak ada definisi __NR_ ditemukan di unistd32.h"
+          last_nr = max(nums)
 
           if "__NR_getrandom" not in unistd32:
-              add_lines = ""
-              for nr in range(cur_nr, 385):
+              add_lines = "\n"
+              for nr in range(last_nr + 1, 385):
                   if nr == 382:
                       add_lines += "#define __NR_renameat2 382\n__SYSCALL(__NR_renameat2, sys_renameat2)\n"
                   elif nr == 384:
                       add_lines += "#define __NR_getrandom 384\n__SYSCALL(__NR_getrandom, sys_getrandom)\n"
                   else:
                       add_lines += f"__SYSCALL({nr}, sys_ni_syscall)\n"
-              add_lines += "#define __NR_syscalls 385"
-              unistd32 = re.sub(r"#define __NR_syscalls\s+\d+", add_lines, unistd32, count=1)
+
+              if "#define __NR_syscalls" in unistd32:
+                  unistd32 = re.sub(r"#define\s+__NR_syscalls\s+\d+", add_lines + "#define __NR_syscalls 385", unistd32, count=1)
+              else:
+                  last_syscall_match = list(re.finditer(r"__SYSCALL\([^\n]+\)", unistd32))[-1]
+                  pos = last_syscall_match.end()
+                  unistd32 = unistd32[:pos] + add_lines + unistd32[pos:]
 
           with open("arch/arm64/include/asm/unistd32.h", "w") as f:
               f.write(unistd32)
-          print(f"Sukses mengisi tabel syscall compat dari {cur_nr} hingga 384!")
+          print(f"Sukses mengisi tabel syscall compat dari {last_nr + 1} hingga 384!")
           '
+
 
           # 2. Fix error 'request for member val' pada Kernel 3.10
           find KernelSU/kernel -type f \( -name "*.c" -o -name "*.h" \) -exec sed -i \
