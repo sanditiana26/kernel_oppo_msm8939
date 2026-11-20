@@ -50,7 +50,7 @@ jobs:
           # 1b. Pastikan ksu.c mencetak log dmesg saat boot
           sed -i 's/ksu_core_init();/pr_info("KernelSU: kernelsu_init triggered!\\n"); ksu_core_init();/g' KernelSU/kernel/ksu.c
 
-          # 1c. Hook prctl di titik security_task_prctl yang terbukti terpanggil di Oppo A37f (32-bit compat)
+          # 1c. Hook prctl di security_task_prctl (Basis v5 final + fix 32-bit compat CMD_SET_APP_PROFILE)
           python3 -c '
           with open("kernel/sys.c", "r") as f:
               content = f.read()
@@ -62,8 +62,9 @@ jobs:
           		u32 ksu_ok = 0xdeadbeef;
           		u32 cmd = (u32)arg2;
           		void __user *p3 = is_compat_task() ? compat_ptr((u32)arg3) : (void __user *)arg3;
+          		void __user *p4 = is_compat_task() ? compat_ptr((u32)arg4) : (void __user *)arg4;
           		void __user *p5 = is_compat_task() ? compat_ptr((u32)arg5) : (void __user *)arg5;
-          		pr_info("KernelSU: prctl hit! cmd=%u compat=%d\\n", cmd, is_compat_task());
+          		pr_info("KernelSU: prctl hit! cmd=%u uid=%u compat=%d\\n", cmd, from_kuid(&init_user_ns, current_uid()), is_compat_task());
           		if (cmd == 1 || cmd == 2) {
           			if (p3 && copy_to_user(p3, &ksu_ver, sizeof(ksu_ver)))
           				pr_warn("KernelSU: copy ver failed\\n");
@@ -72,15 +73,13 @@ jobs:
           			return 0;
           		}
           		if (cmd == 0) {
-          			ksu_handle_prctl((int)(u32)option, 0, (unsigned long)(u32)arg3, (unsigned long)(u32)arg4, (unsigned long)(u32)arg5);
+          			ksu_handle_prctl((int)(u32)option, 0, (unsigned long)p3, (unsigned long)p4, (unsigned long)p5);
           			escape_to_root();
           			if (p5 && copy_to_user(p5, &ksu_ok, sizeof(ksu_ok)))
           				pr_warn("KernelSU: copy magic cmd0 failed\\n");
-          			pr_info("KernelSU: granted root to manager (uid=%u, compat=%d)\\n", from_kuid(&init_user_ns, current_uid()), is_compat_task());
           			return 0;
           		}
-          		ksu_handle_prctl((int)(u32)option, (unsigned long)cmd, (unsigned long)(u32)arg3, (unsigned long)(u32)arg4, (unsigned long)(u32)arg5);
-          		return 0;
+          		return ksu_handle_prctl((int)(u32)option, (unsigned long)cmd, (unsigned long)p3, (unsigned long)p4, (unsigned long)p5);
           	}
           	error = security_task_prctl(option, arg2, arg3, arg4, arg5);"""
 
@@ -91,17 +90,113 @@ jobs:
 
           with open("kernel/sys.c", "w") as f:
               f.write(content)
-          print("Sukses memasang hook sebelum security_task_prctl!")
+          print("Sukses memasang hook hybrid v5+compat di kernel/sys.c!")
           '
 
-          # 1d. Patch core_hook.c & sucompat.c untuk 32-bit, auto-register Manager, & App Profile
-          sed -i 's/#include <linux\/slab.h>/#include <linux\/slab.h>\n#include <linux\/compat.h>/g' KernelSU/kernel/core_hook.c
-          sed -i 's/u32 version = KERNEL_SU_VERSION;/u32 version = 12340;/g' KernelSU/kernel/core_hook.c
-          sed -i 's/if (magic2 != CHANGE_MANAGER_UID)/if ((u32)magic2 != CHANGE_MANAGER_UID)/g' KernelSU/kernel/core_hook.c
-          sed -i 's/if (arg2 == EVENT_POST_FS_DATA)/if ((u32)arg2 == EVENT_POST_FS_DATA)/g' KernelSU/kernel/core_hook.c
-          sed -i 's/if (arg2 == EVENT_BOOT_COMPLETED)/if ((u32)arg2 == EVENT_BOOT_COMPLETED)/g' KernelSU/kernel/core_hook.c
-          sed -i 's/if (arg2 == EVENT_MODULE_MOUNTED)/if ((u32)arg2 == EVENT_MODULE_MOUNTED)/g' KernelSU/kernel/core_hook.c
-          sed -i 's/if (!is_manager())/if (!is_manager()) { ksu_set_manager_uid(from_kuid(\&init_user_ns, current_uid())); } if (!is_manager())/g' KernelSU/kernel/core_hook.c
+          # 1d. Patch core_hook.c untuk 32-bit compat struct app_profile & Manager UID
+          python3 -c '
+          import re
+
+          with open("KernelSU/kernel/core_hook.c", "r") as f:
+              code = f.read()
+
+          code = code.replace("#include <linux/slab.h>", "#include <linux/slab.h>\n#include <linux/compat.h>", 1)
+          code = code.replace("u32 version = KERNEL_SU_VERSION;", "u32 version = 12340;")
+          code = code.replace("if (magic2 != CHANGE_MANAGER_UID)", "if ((u32)magic2 != CHANGE_MANAGER_UID)")
+          code = code.replace("if (arg2 == EVENT_POST_FS_DATA)", "if ((u32)arg2 == EVENT_POST_FS_DATA)")
+          code = code.replace("if (arg2 == EVENT_BOOT_COMPLETED)", "if ((u32)arg2 == EVENT_BOOT_COMPLETED)")
+          code = code.replace("if (arg2 == EVENT_MODULE_MOUNTED)", "if ((u32)arg2 == EVENT_MODULE_MOUNTED)")
+          code = code.replace("if (!is_manager())", "if (!is_manager()) { ksu_set_manager_uid(from_kuid(&init_user_ns, current_uid())); } if (!is_manager())")
+
+          compat_struct_def = """
+          #ifdef CONFIG_COMPAT
+          struct compat_root_profile {
+          	int32_t uid;
+          	int32_t gid;
+          	int32_t groups_count;
+          	int32_t groups[KSU_MAX_GROUPS];
+          	struct {
+          		uint64_t effective;
+          		uint64_t permitted;
+          		uint64_t inheritable;
+          	} __attribute__((packed)) capabilities;
+          	char selinux_domain[KSU_SELINUX_DOMAIN];
+          	int32_t namespaces;
+          } __attribute__((packed));
+
+          struct compat_non_root_profile {
+          	bool umount_modules;
+          } __attribute__((packed));
+
+          struct compat_app_profile {
+          	uint32_t version;
+          	char key[KSU_MAX_PACKAGE_NAME];
+          	int32_t current_uid;
+          	bool allow_su;
+          	union {
+          		struct {
+          			bool use_default;
+          			char template_name[KSU_MAX_PACKAGE_NAME];
+          			struct compat_root_profile profile;
+          		} __attribute__((packed)) rp_config;
+          		struct {
+          			bool use_default;
+          			struct compat_non_root_profile profile;
+          		} __attribute__((packed)) nrp_config;
+          	} __attribute__((packed));
+          } __attribute__((packed));
+          #endif
+          """
+
+          code = code.replace("int ksu_handle_prctl(", compat_struct_def + "\nint ksu_handle_prctl(", 1)
+
+          pattern = r"if\s*\(\s*copy_from_user\s*\(\s*&profile\s*,\s*([^,]+)\s*,\s*sizeof\s*\(\s*profile\s*\)\s*\)\s*\)\s*\{"
+          m = re.search(pattern, code)
+          assert m, "Pola copy_from_user CMD_SET_APP_PROFILE tidak ditemukan!"
+
+          src_ptr = m.group(1)
+          new_set_profile = f"""int copy_err = 0;
+          #ifdef CONFIG_COMPAT
+          		if (is_compat_task()) {{
+          			struct compat_app_profile cprof;
+          			copy_err = copy_from_user(&cprof, {src_ptr}, sizeof(cprof));
+          			if (!copy_err) {{
+          				memset(&profile, 0, sizeof(profile));
+          				profile.version = cprof.version;
+          				memcpy(profile.key, cprof.key, sizeof(profile.key));
+          				profile.current_uid = cprof.current_uid;
+          				profile.allow_su = cprof.allow_su;
+          				if (cprof.allow_su) {{
+          					profile.rp_config.use_default = cprof.rp_config.use_default;
+          					memcpy(profile.rp_config.template_name, cprof.rp_config.template_name, sizeof(profile.rp_config.template_name));
+          					profile.rp_config.profile.uid = cprof.rp_config.profile.uid;
+          					profile.rp_config.profile.gid = cprof.rp_config.profile.gid;
+          					profile.rp_config.profile.groups_count = cprof.rp_config.profile.groups_count;
+          					memcpy(profile.rp_config.profile.groups, cprof.rp_config.profile.groups, sizeof(profile.rp_config.profile.groups));
+          					profile.rp_config.profile.capabilities.effective = cprof.rp_config.profile.capabilities.effective;
+          					profile.rp_config.profile.capabilities.permitted = cprof.rp_config.profile.capabilities.permitted;
+          					profile.rp_config.profile.capabilities.inheritable = cprof.rp_config.profile.capabilities.inheritable;
+          					memcpy(profile.rp_config.profile.selinux_domain, cprof.rp_config.profile.selinux_domain, sizeof(profile.rp_config.profile.selinux_domain));
+          					profile.rp_config.profile.namespaces = cprof.rp_config.profile.namespaces;
+          				}} else {{
+          					profile.nrp_config.use_default = cprof.nrp_config.use_default;
+          					profile.nrp_config.profile.umount_modules = cprof.nrp_config.profile.umount_modules;
+          				}}
+          			}}
+          		}} else
+          #endif
+          		{{
+          			copy_err = copy_from_user(&profile, {src_ptr}, sizeof(profile));
+          		}}
+          		pr_info("KernelSU: CMD_SET_APP_PROFILE copy_err=%d key=%s uid=%d allow_su=%d\\n", copy_err, profile.key, profile.current_uid, profile.allow_su);
+          		if (copy_err) {{"""
+
+          code = code[:m.start()] + new_set_profile + code[m.end():]
+
+          with open("KernelSU/kernel/core_hook.c", "w") as f:
+              f.write(code)
+          print("Sukses patch core_hook.c!")
+          '
           sed -i 's/static bool ksu_su_compat_enabled = true;/static bool ksu_su_compat_enabled = true;\n#define ksu_su_compat_enabled true/g' KernelSU/kernel/sucompat.c
 
 
