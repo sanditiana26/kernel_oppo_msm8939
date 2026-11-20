@@ -92,8 +92,7 @@ jobs:
               f.write(content)
           print("Sukses memasang hook hybrid v5+compat di kernel/sys.c!")
           '
-
-          # 1d. Patch core_hook.c untuk 32-bit compat struct app_profile & Manager UID
+          # 1d. Patch core_hook.c untuk 32-bit compat CMD_GET_APP_PROFILE (cmd=13) & CMD_SET_APP_PROFILE (cmd=14)
           python3 -c '
           import re
 
@@ -108,7 +107,7 @@ jobs:
           code = code.replace("if (arg2 == EVENT_MODULE_MOUNTED)", "if ((u32)arg2 == EVENT_MODULE_MOUNTED)")
           code = code.replace("if (!is_manager())", "if (!is_manager()) { ksu_set_manager_uid(from_kuid(&init_user_ns, current_uid())); } if (!is_manager())")
 
-          compat_struct_def = """
+          compat_helpers = """
           #ifdef CONFIG_COMPAT
           struct compat_root_profile {
           	int32_t uid;
@@ -145,59 +144,119 @@ jobs:
           		} __attribute__((packed)) nrp_config;
           	} __attribute__((packed));
           } __attribute__((packed));
+
+          static void compat_to_app_profile(const struct compat_app_profile *cprof, struct app_profile *prof)
+          {
+          	memset(prof, 0, sizeof(*prof));
+          	prof->version = cprof->version;
+          	memcpy(prof->key, cprof->key, sizeof(prof->key));
+          	prof->current_uid = cprof->current_uid;
+          	prof->allow_su = cprof->allow_su;
+          	if (cprof->allow_su) {
+          		prof->rp_config.use_default = cprof->rp_config.use_default;
+          		memcpy(prof->rp_config.template_name, cprof->rp_config.template_name, sizeof(prof->rp_config.template_name));
+          		prof->rp_config.profile.uid = cprof->rp_config.profile.uid;
+          		prof->rp_config.profile.gid = cprof->rp_config.profile.gid;
+          		prof->rp_config.profile.groups_count = cprof->rp_config.profile.groups_count;
+          		memcpy(prof->rp_config.profile.groups, cprof->rp_config.profile.groups, sizeof(prof->rp_config.profile.groups));
+          		prof->rp_config.profile.capabilities.effective = cprof->rp_config.profile.capabilities.effective;
+          		prof->rp_config.profile.capabilities.permitted = cprof->rp_config.profile.capabilities.permitted;
+          		prof->rp_config.profile.capabilities.inheritable = cprof->rp_config.profile.capabilities.inheritable;
+          		memcpy(prof->rp_config.profile.selinux_domain, cprof->rp_config.profile.selinux_domain, sizeof(prof->rp_config.profile.selinux_domain));
+          		prof->rp_config.profile.namespaces = cprof->rp_config.profile.namespaces;
+          	} else {
+          		prof->nrp_config.use_default = cprof->nrp_config.use_default;
+          		prof->nrp_config.profile.umount_modules = cprof->nrp_config.profile.umount_modules;
+          	}
+          }
+
+          static void app_profile_to_compat(const struct app_profile *prof, struct compat_app_profile *cprof)
+          {
+          	memset(cprof, 0, sizeof(*cprof));
+          	cprof->version = prof->version;
+          	memcpy(cprof->key, prof->key, sizeof(cprof->key));
+          	cprof->current_uid = prof->current_uid;
+          	cprof->allow_su = prof->allow_su;
+          	if (prof->allow_su) {
+          		cprof->rp_config.use_default = prof->rp_config.use_default;
+          		memcpy(cprof->rp_config.template_name, prof->rp_config.template_name, sizeof(cprof->rp_config.template_name));
+          		cprof->rp_config.profile.uid = prof->rp_config.profile.uid;
+          		cprof->rp_config.profile.gid = prof->rp_config.profile.gid;
+          		cprof->rp_config.profile.groups_count = prof->rp_config.profile.groups_count;
+          		memcpy(cprof->rp_config.profile.groups, prof->rp_config.profile.groups, sizeof(cprof->rp_config.profile.groups));
+          		cprof->rp_config.profile.capabilities.effective = prof->rp_config.profile.capabilities.effective;
+          		cprof->rp_config.profile.capabilities.permitted = prof->rp_config.profile.capabilities.permitted;
+          		cprof->rp_config.profile.capabilities.inheritable = prof->rp_config.profile.capabilities.inheritable;
+          		memcpy(cprof->rp_config.profile.selinux_domain, prof->rp_config.profile.selinux_domain, sizeof(cprof->rp_config.profile.selinux_domain));
+          		cprof->rp_config.profile.namespaces = prof->rp_config.profile.namespaces;
+          	} else {
+          		cprof->nrp_config.use_default = prof->nrp_config.use_default;
+          		cprof->nrp_config.profile.umount_modules = prof->nrp_config.profile.umount_modules;
+          	}
+          }
           #endif
           """
 
-          code = code.replace("int ksu_handle_prctl(", compat_struct_def + "\nint ksu_handle_prctl(", 1)
+          code = code.replace("int ksu_handle_prctl(", compat_helpers + "\nint ksu_handle_prctl(", 1)
 
-          pattern = r"if\s*\(\s*copy_from_user\s*\(\s*&profile\s*,\s*([^,]+)\s*,\s*sizeof\s*\(\s*profile\s*\)\s*\)\s*\)\s*\{"
-          m = re.search(pattern, code)
-          assert m, "Pola copy_from_user CMD_SET_APP_PROFILE tidak ditemukan!"
-
-          src_ptr = m.group(1)
-          new_set_profile = f"""int copy_err = 0;
+          # 1. Patch semua copy_from_user(&profile, ...) untuk CMD_GET_APP_PROFILE & CMD_SET_APP_PROFILE
+          def repl_copy_from(m):
+              src_ptr = m.group(1)
+              return f"""({{
+          		int __err = 0;
           #ifdef CONFIG_COMPAT
           		if (is_compat_task()) {{
-          			struct compat_app_profile cprof;
-          			copy_err = copy_from_user(&cprof, {src_ptr}, sizeof(cprof));
-          			if (!copy_err) {{
-          				memset(&profile, 0, sizeof(profile));
-          				profile.version = cprof.version;
-          				memcpy(profile.key, cprof.key, sizeof(profile.key));
-          				profile.current_uid = cprof.current_uid;
-          				profile.allow_su = cprof.allow_su;
-          				if (cprof.allow_su) {{
-          					profile.rp_config.use_default = cprof.rp_config.use_default;
-          					memcpy(profile.rp_config.template_name, cprof.rp_config.template_name, sizeof(profile.rp_config.template_name));
-          					profile.rp_config.profile.uid = cprof.rp_config.profile.uid;
-          					profile.rp_config.profile.gid = cprof.rp_config.profile.gid;
-          					profile.rp_config.profile.groups_count = cprof.rp_config.profile.groups_count;
-          					memcpy(profile.rp_config.profile.groups, cprof.rp_config.profile.groups, sizeof(profile.rp_config.profile.groups));
-          					profile.rp_config.profile.capabilities.effective = cprof.rp_config.profile.capabilities.effective;
-          					profile.rp_config.profile.capabilities.permitted = cprof.rp_config.profile.capabilities.permitted;
-          					profile.rp_config.profile.capabilities.inheritable = cprof.rp_config.profile.capabilities.inheritable;
-          					memcpy(profile.rp_config.profile.selinux_domain, cprof.rp_config.profile.selinux_domain, sizeof(profile.rp_config.profile.selinux_domain));
-          					profile.rp_config.profile.namespaces = cprof.rp_config.profile.namespaces;
-          				}} else {{
-          					profile.nrp_config.use_default = cprof.nrp_config.use_default;
-          					profile.nrp_config.profile.umount_modules = cprof.nrp_config.profile.umount_modules;
-          				}}
-          			}}
+          			struct compat_app_profile __cprof;
+          			__err = copy_from_user(&__cprof, {src_ptr}, sizeof(__cprof));
+          			if (!__err)
+          				compat_to_app_profile(&__cprof, &profile);
           		}} else
           #endif
           		{{
-          			copy_err = copy_from_user(&profile, {src_ptr}, sizeof(profile));
+          			__err = copy_from_user(&profile, {src_ptr}, sizeof(profile));
           		}}
-          		pr_info("KernelSU: CMD_SET_APP_PROFILE copy_err=%d key=%s uid=%d allow_su=%d\\n", copy_err, profile.key, profile.current_uid, profile.allow_su);
-          		if (copy_err) {{"""
+          		pr_info("KernelSU: copy_from_user profile err=%d key=%s uid=%d allow=%d\\n", __err, profile.key, profile.current_uid, profile.allow_su);
+          		__err;
+          	}})"""
 
-          code = code[:m.start()] + new_set_profile + code[m.end():]
+          code, count_from = re.subn(
+              r"copy_from_user\s*\(\s*&profile\s*,\s*([^,]+)\s*,\s*sizeof\s*\(\s*profile\s*\)\s*\)",
+              repl_copy_from,
+              code
+          )
+          assert count_from >= 1, "Tidak menemukan copy_from_user(&profile, ...)"
+
+          # 2. Patch copy_to_user(..., &profile, sizeof(profile)) untuk CMD_GET_APP_PROFILE (cmd=13)
+          def repl_copy_to(m):
+              dst_ptr = m.group(1)
+              return f"""({{
+          		int __err = 0;
+          #ifdef CONFIG_COMPAT
+          		if (is_compat_task()) {{
+          			struct compat_app_profile __cprof;
+          			app_profile_to_compat(&profile, &__cprof);
+          			__err = copy_to_user({dst_ptr}, &__cprof, sizeof(__cprof));
+          		}} else
+          #endif
+          		{{
+          			__err = copy_to_user({dst_ptr}, &profile, sizeof(profile));
+          		}}
+          		pr_info("KernelSU: copy_to_user profile err=%d key=%s\\n", __err, profile.key);
+          		__err;
+          	}})"""
+
+          code, count_to = re.subn(
+              r"copy_to_user\s*\(\s*([^,]+)\s*,\s*&profile\s*,\s*sizeof\s*\(\s*profile\s*\)\s*\)",
+              repl_copy_to,
+              code
+          )
+          print(f"Sukses patch core_hook.c: {count_from} copy_from_user & {count_to} copy_to_user!")
 
           with open("KernelSU/kernel/core_hook.c", "w") as f:
               f.write(code)
-          print("Sukses patch core_hook.c!")
           '
           sed -i 's/static bool ksu_su_compat_enabled = true;/static bool ksu_su_compat_enabled = true;\n#define ksu_su_compat_enabled true/g' KernelSU/kernel/sucompat.c
+
 
 
           # 1e. Aktifkan guard #ifdef CONFIG_KSU di semua file hook
