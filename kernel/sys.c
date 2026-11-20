@@ -2262,9 +2262,7 @@ SYSCALL_DEFINE5(prctl, int, option, unsigned long, arg2, unsigned long, arg3,
 	struct task_struct *tsk;
 	unsigned char comm[sizeof(me->comm)];
 	long error;
-#ifdef CONFIG_KSU
-	ksu_handle_prctl(option, arg2, arg3, arg4, arg5);
-#endif
+
 
 	error = security_task_prctl(option, arg2, arg3, arg4, arg5);
 	if (error != -ENOSYS)
