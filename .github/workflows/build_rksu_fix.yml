@@ -50,7 +50,7 @@ jobs:
           # 1b. Pastikan ksu.c mencetak log dmesg saat boot
           sed -i 's/ksu_core_init();/pr_info("KernelSU: kernelsu_init triggered!\\n"); ksu_core_init();/g' KernelSU/kernel/ksu.c
           
-          # 1c. Hook prctl di security_task_prctl (Clean no-bracket auto-dereference)
+           # 1c. Hook prctl di security_task_prctl (Clean no-bracket auto-dereference)
           python3 << 'EOF'
           with open("kernel/sys.c", "r") as f:
               content = f.read()
@@ -138,7 +138,6 @@ jobs:
               f.write(content)
           print("Sukses memasang auto-dereference wrapper struct di kernel/sys.c!")
           EOF
-
 
           # 1d. Patch core_hook.c untuk 32-bit compat App Profile (Umount + SuperUser) & Manager UID
           python3 << 'EOF'
