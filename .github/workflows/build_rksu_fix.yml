@@ -112,26 +112,7 @@ jobs:
               code
           )
           print(f"Total pengecekan is_manager() dipatch: {mgr_hits}")
-          # Suntikkan registrasi manager UID langsung di dalam ksu_handle_prctl
-          hook_mgr_entry = """
-          	{
-          		uid_t __cuid = from_kuid(&init_user_ns, current_uid());
-          		if (__cuid >= 10000 && (u32)arg2 != 0 && (u32)arg2 != 1 && (u32)arg2 != 2) {
-          			
-          		}
-          	}
-          """
-          target_fn = "int ksu_handle_prctl(int option, unsigned long arg2, unsigned long arg3,"
-          assert target_fn in code, "Fungsi ksu_handle_prctl tidak ditemukan di core_hook.c!"
-
-          # Sisipkan tepat setelah kurung kurawal pembuka '{' milik ksu_handle_prctl
-          fn_pos = code.find(target_fn)
-          brace_pos = code.find("{", fn_pos)
-          assert brace_pos != -1, "Kurung kurawal pembuka ksu_handle_prctl tidak ditemukan!"
-          code = code[:brace_pos + 1] + hook_mgr_entry + code[brace_pos + 1:]
-          print("Sukses menyuntikkan auto-bind manager UID di awal ksu_handle_prctl!")
-
-
+          
           compat_helpers = """
           #ifdef CONFIG_COMPAT
           struct compat_root_profile {
@@ -278,14 +259,7 @@ jobs:
               if "profile" in line and ("copy_" in line or "CMD_" in line):
                   print("LINE:", line.strip())
           assert count_from >= 1 and count_to >= 1, "Gagal patch copy_from_user / copy_to_user pada profile!"
-          # Pastikan CMD_IS_SU_ENABLED selalu mengembalikan true ke RKSU Manager
-          code, su_en_hits = re.subn(
-              r"copy_to_user\s*\(\s*([^,]+)\s*,\s*&ksu_su_compat_enabled\s*,\s*sizeof\s*\([^)]+\)\s*\)",
-              r'({ bool __su_on = true; pr_info("KernelSU: CMD_IS_SU_ENABLED -> true\\n"); copy_to_user(\1, &__su_on, sizeof(__su_on)); })',
-              code
-          )
-          print(f"Total CMD_IS_SU_ENABLED dipatch: {su_en_hits}")
-
+          
           with open("KernelSU/kernel/core_hook.c", "w") as f:
               f.write(code)
           EOF
