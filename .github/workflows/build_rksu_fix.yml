@@ -50,8 +50,7 @@ jobs:
           # 1b. Pastikan ksu.c mencetak log dmesg saat boot
           sed -i 's/ksu_core_init();/pr_info("KernelSU: kernelsu_init triggered!\\n"); ksu_core_init();/g' KernelSU/kernel/ksu.c
           
-
-          # 1c. Hook prctl di security_task_prctl (Fix 12340: compat_ptr + CMD_IS_SU_ENABLED & SafeMode)
+          # 1c. Hook prctl di security_task_prctl (Fix 12340: compat_ptr + CMD_SET_APP_PROFILE 32-bit)
           python3 << 'EOF'
           with open("kernel/sys.c", "r") as f:
               content = f.read()
@@ -86,11 +85,42 @@ jobs:
           		}
           		if (cmd == 15) {
           			u8 su_en = 1;
-          			if (p3 && copy_to_user(p3, &su_en, sizeof(su_en)))
-          				pr_warn("KernelSU: copy su_en failed\\n");
+          			if (p3 && access_ok(VERIFY_WRITE, p3, sizeof(su_en))) {
+          				if (copy_to_user(p3, &su_en, sizeof(su_en)))
+          					pr_warn("KernelSU: copy su_en failed\\n");
+          			}
           			if (p5 && copy_to_user(p5, &ksu_ok, sizeof(ksu_ok)))
           				pr_warn("KernelSU: copy magic su_en failed\\n");
           			return 0;
+          		}
+          		if (is_compat_task() && (cmd == 4 || cmd == 5) && p3) {
+          			/* Terjemahkan layout 32-bit (tanpa 4-byte padding sebelum u64) ke layout 64-bit */
+          			u8 *buf32 = kzalloc(2048, GFP_KERNEL);
+          			u8 *buf64 = kzalloc(2048, GFP_KERNEL);
+          			int ret_prof = -EFAULT;
+          			if (buf32 && buf64 && !copy_from_user(buf32, p3, 1024)) {
+          				mm_segment_t old_fs;
+          				/* Header: version(4) + key(256) + current_uid(4) + allow_su(1) = 265 byte */
+          				memcpy(buf64, buf32, 265);
+          				/* Offset union di 32-bit = 268, di 64-bit = 272 (selisih +4 byte) */
+          				memcpy(buf64 + 272, buf32 + 268, 740);
+          				old_fs = get_fs();
+          				set_fs(KERNEL_DS);
+          				ret_prof = ksu_handle_prctl((int)(u32)option, (unsigned long)cmd, (unsigned long)buf64, (unsigned long)p4, (unsigned long)&ksu_ok);
+          				set_fs(old_fs);
+          				if (cmd == 4 && ret_prof == 0) {
+          					memcpy(buf32, buf64, 265);
+          					memcpy(buf32 + 268, buf64 + 272, 740);
+          					if (copy_to_user(p3, buf32, 1008))
+          						ret_prof = -EFAULT;
+          				}
+          				if (ret_prof == 0 && p5 && copy_to_user(p5, &ksu_ok, sizeof(ksu_ok)))
+          					ret_prof = -EFAULT;
+          			}
+          			kfree(buf32);
+          			kfree(buf64);
+          			pr_info("KernelSU: compat cmd=%u result=%d\\n", cmd, ret_prof);
+          			return ret_prof;
           		}
           		return ksu_handle_prctl((int)(u32)option, (unsigned long)cmd, (unsigned long)p3, (unsigned long)p4, (unsigned long)p5);
           	}
@@ -103,7 +133,7 @@ jobs:
 
           with open("kernel/sys.c", "w") as f:
               f.write(content)
-          print("Sukses memasang hook final 12340 di kernel/sys.c!")
+          print("Sukses memasang hook final 12340 + compat_app_profile di kernel/sys.c!")
           EOF
 
           # 1d. Patch core_hook.c untuk 32-bit compat App Profile (Umount + SuperUser) & Manager UID
@@ -291,13 +321,6 @@ jobs:
             fi
           done
           
-          
-          #1F
-          # 1.1 Perbaiki pointer compat (arg3, arg4, arg5) untuk ROM 32-bit (compat=1)
-          sed -i 's/(void __user \*)arg3/is_compat_task() ? compat_ptr(arg3) : (void __user \*)arg3/g' drivers/kernelsu/core_hook.c
-          sed -i 's/(void __user \*)arg4/is_compat_task() ? compat_ptr(arg4) : (void __user \*)arg4/g' drivers/kernelsu/core_hook.c
-          sed -i 's/(void __user \*)arg5/is_compat_task() ? compat_ptr(arg5) : (void __user \*)arg5/g' drivers/kernelsu/core_hook.c
-          sed -i 's/copy_to_user(arg5,/copy_to_user(is_compat_task() ? compat_ptr(arg5) : (void __user \*)arg5,/g' drivers/kernelsu/core_hook.c
           
           # 2.1 Matikan paksa Safe Mode agar saklar tidak terkunci
           sed -i 's/ksu_safe_mode = true;/ksu_safe_mode = false;/g' drivers/kernelsu/core_hook.c
