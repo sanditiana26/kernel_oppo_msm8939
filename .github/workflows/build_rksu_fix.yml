@@ -50,7 +50,7 @@ jobs:
           # 1b. Pastikan ksu.c mencetak log dmesg saat boot
           sed -i 's/ksu_core_init();/pr_info("KernelSU: kernelsu_init triggered!\\n"); ksu_core_init();/g' KernelSU/kernel/ksu.c
           
-                    # 1c. Hook prctl di security_task_prctl (Dereference compat_uptr_t profile pointer)
+          # 1c. Hook prctl di security_task_prctl (Direct p3 + hex dump 32 byte pertama)
           python3 << 'EOF'
           with open("kernel/sys.c", "r") as f:
               content = f.read()
@@ -96,29 +96,25 @@ jobs:
           		}
           		if ((cmd == 4 || cmd == 5) && p3) {
           			u8 *kbuf = kzalloc(2048, GFP_KERNEL);
-          			void __user *prof_uptr = p3;
           			int ret_prof = -EFAULT;
-          			if (is_compat_task()) {
-          				u32 raw_ptr = 0;
-          				if (!get_user(raw_ptr, (u32 __user *)p3) && raw_ptr > 0x10000)
-          					prof_uptr = compat_ptr(raw_ptr);
-          			} else {
-          				unsigned long raw_ptr64 = 0;
-          				if (!get_user(raw_ptr64, (unsigned long __user *)p3) && raw_ptr64 > 0x10000)
-          					prof_uptr = (void __user *)raw_ptr64;
-          			}
-          			if (kbuf && prof_uptr && !copy_from_user(kbuf, prof_uptr, 1024)) {
-          				if (cmd == 5) {
-          					ret_prof = ksu_set_app_profile(kbuf, true);
-          					pr_info("KernelSU: direct set_profile uid=%u ver=%u key=%s allow_su=%u ret=%d\\n",
-          						caller_uid, *(u32 *)kbuf, (char *)(kbuf + 4), kbuf, ret_prof);
-          				} else {
-          					ret_prof = ksu_get_app_profile(kbuf);
-          					if (ret_prof == 0 && copy_to_user(prof_uptr, kbuf, 1024))
+          			unsigned long rem = 0;
+          			if (kbuf) {
+          				rem = copy_from_user(kbuf, p3, 800);
+          				if (rem < 500) {
+          					u32 *w = (u32 *)kbuf;
+          					pr_info("KernelSU: p3_dump cmd=%u rem=%lu w0=%08x w1=%08x w2=%08x w3=%08x w4=%08x w5=%08x\\n",
+          						cmd, rem, w, w, w, w, w, w);
+          					if (cmd == 5) {
+          						ret_prof = ksu_set_app_profile(kbuf, true);
+          						pr_info("KernelSU: set_profile ret=%d\\n", ret_prof);
+          					} else {
+          						ret_prof = ksu_get_app_profile(kbuf);
+          						if (ret_prof == 0)
+          							copy_to_user(p3, kbuf, 800 - rem);
+          					}
+          					if (ret_prof == 0 && p5 && copy_to_user(p5, &ksu_ok, sizeof(ksu_ok)))
           						ret_prof = -EFAULT;
           				}
-          				if (ret_prof == 0 && p5 && copy_to_user(p5, &ksu_ok, sizeof(ksu_ok)))
-          					ret_prof = -EFAULT;
           			}
           			kfree(kbuf);
           			return ret_prof;
@@ -134,8 +130,9 @@ jobs:
 
           with open("kernel/sys.c", "w") as f:
               f.write(content)
-          print("Sukses memasang dereference profile pointer di kernel/sys.c!")
+          print("Sukses memasang hook p3_dump di kernel/sys.c!")
           EOF
+
 
 
           # 1d. Patch core_hook.c untuk 32-bit compat App Profile (Umount + SuperUser) & Manager UID
