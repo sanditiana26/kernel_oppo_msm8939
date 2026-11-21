@@ -50,7 +50,7 @@ jobs:
           # 1b. Pastikan ksu.c mencetak log dmesg saat boot
           sed -i 's/ksu_core_init();/pr_info("KernelSU: kernelsu_init triggered!\\n"); ksu_core_init();/g' KernelSU/kernel/ksu.c
           
-          # 1c. Hook prctl di security_task_prctl (Fix 12340: compat_ptr + CMD_SET_APP_PROFILE 32-bit)
+                    # 1c. Hook prctl di security_task_prctl (Fix 12340: compat_ptr + CMD_SET_APP_PROFILE 1:1)
           python3 << 'EOF'
           with open("kernel/sys.c", "r") as f:
               content = f.read()
@@ -94,31 +94,21 @@ jobs:
           			return 0;
           		}
           		if (is_compat_task() && (cmd == 4 || cmd == 5) && p3) {
-          			/* Terjemahkan layout 32-bit (tanpa 4-byte padding sebelum u64) ke layout 64-bit */
-          			u8 *buf32 = kzalloc(2048, GFP_KERNEL);
-          			u8 *buf64 = kzalloc(2048, GFP_KERNEL);
+          			u8 *kbuf = kzalloc(2048, GFP_KERNEL);
           			int ret_prof = -EFAULT;
-          			if (buf32 && buf64 && !copy_from_user(buf32, p3, 1024)) {
-          				mm_segment_t old_fs;
-          				/* Header: version(4) + key(256) + current_uid(4) + allow_su(1) = 265 byte */
-          				memcpy(buf64, buf32, 265);
-          				/* Offset union di 32-bit = 268, di 64-bit = 272 (selisih +4 byte) */
-          				memcpy(buf64 + 272, buf32 + 268, 740);
-          				old_fs = get_fs();
+          			if (kbuf && !copy_from_user(kbuf, p3, 1024)) {
+          				mm_segment_t old_fs = get_fs();
           				set_fs(KERNEL_DS);
-          				ret_prof = ksu_handle_prctl((int)(u32)option, (unsigned long)cmd, (unsigned long)buf64, (unsigned long)p4, (unsigned long)&ksu_ok);
+          				ret_prof = ksu_handle_prctl((int)(u32)option, (unsigned long)cmd, (unsigned long)kbuf, (unsigned long)p4, (unsigned long)&ksu_ok);
           				set_fs(old_fs);
           				if (cmd == 4 && ret_prof == 0) {
-          					memcpy(buf32, buf64, 265);
-          					memcpy(buf32 + 268, buf64 + 272, 740);
-          					if (copy_to_user(p3, buf32, 1008))
+          					if (copy_to_user(p3, kbuf, 1024))
           						ret_prof = -EFAULT;
           				}
           				if (ret_prof == 0 && p5 && copy_to_user(p5, &ksu_ok, sizeof(ksu_ok)))
           					ret_prof = -EFAULT;
           			}
-          			kfree(buf32);
-          			kfree(buf64);
+          			kfree(kbuf);
           			pr_info("KernelSU: compat cmd=%u result=%d\\n", cmd, ret_prof);
           			return ret_prof;
           		}
@@ -133,7 +123,7 @@ jobs:
 
           with open("kernel/sys.c", "w") as f:
               f.write(content)
-          print("Sukses memasang hook final 12340 + compat_app_profile di kernel/sys.c!")
+          print("Sukses memasang hook final 12340 + compat_app_profile 1:1 di kernel/sys.c!")
           EOF
 
           # 1d. Patch core_hook.c untuk 32-bit compat App Profile (Umount + SuperUser) & Manager UID
