@@ -785,13 +785,18 @@ __SYSCALL(__NR_finit_module, sys_finit_module)
 __SYSCALL(__NR_sys_sched_setattr, sys_sched_setattr)
 #define __NR_sys_sched_getattr 381
 __SYSCALL(__NR_sys_sched_getattr, sys_sched_getattr)
-/* #define __NR_renameat2 382 */
-__SYSCALL(382, sys_ni_syscall)
+#define __NR_renameat 382
+__SYSCALL(__NR_renameat, sys_renameat)
 #define __NR_seccomp 383
 __SYSCALL(__NR_seccomp, sys_seccomp)
 #define __NR_getrandom 384
 __SYSCALL(__NR_getrandom, sys_getrandom)
 #define __NR_memfd_create 385
 __SYSCALL(__NR_memfd_create, sys_memfd_create)
-#define __NR_renameat2 391
-__SYSCALL(__NR_renameat2, sys_renameat2)
+__SYSCALL(386, sys_ni_syscall)
+__SYSCALL(387, sys_ni_syscall)
+__SYSCALL(388, sys_ni_syscall)
+__SYSCALL(389, sys_ni_syscall)
+__SYSCALL(390, sys_ni_syscall)
+#define __NR_renameat_compat 391
+__SYSCALL(__NR_renameat_compat, sys_renameat)
