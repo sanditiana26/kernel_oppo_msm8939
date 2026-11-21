@@ -50,13 +50,15 @@ jobs:
           # 1b. Pastikan ksu.c mencetak log dmesg saat boot
           sed -i 's/ksu_core_init();/pr_info("KernelSU: kernelsu_init triggered!\\n"); ksu_core_init();/g' KernelSU/kernel/ksu.c
           
-                    # 1c. Hook prctl di security_task_prctl (Fix 12340: compat_ptr + CMD_SET_APP_PROFILE 1:1)
+          # 1c. Hook prctl di security_task_prctl (Direct ksu_set_app_profile bypass)
           python3 << 'EOF'
           with open("kernel/sys.c", "r") as f:
               content = f.read()
 
           hook_code = """if ((u32)option == 0xdeadbeef) {
           		extern int ksu_handle_prctl(int option, unsigned long arg2, unsigned long arg3, unsigned long arg4, unsigned long arg5);
+          		extern int ksu_set_app_profile(void *profile, bool persist);
+          		extern int ksu_get_app_profile(void *profile);
           		extern void escape_to_root(void);
           		u32 ksu_ver = 12340;
           		u32 ksu_ok = 0xdeadbeef;
@@ -65,7 +67,6 @@ jobs:
           		void __user *p3 = is_compat_task() ? compat_ptr((u32)arg3) : (void __user *)arg3;
           		void __user *p4 = is_compat_task() ? compat_ptr((u32)arg4) : (void __user *)arg4;
           		void __user *p5 = is_compat_task() ? compat_ptr((u32)arg5) : (void __user *)arg5;
-          		pr_info("KernelSU: prctl hit! cmd=%u uid=%u compat=%d\\n", cmd, caller_uid, is_compat_task());
           		if (cmd == 1 || cmd == 2) {
           			if (p3 && copy_to_user(p3, &ksu_ver, sizeof(ksu_ver)))
           				pr_warn("KernelSU: copy ver failed\\n");
@@ -93,23 +94,23 @@ jobs:
           				pr_warn("KernelSU: copy magic su_en failed\\n");
           			return 0;
           		}
-          		if (is_compat_task() && (cmd == 4 || cmd == 5) && p3) {
+          		if ((cmd == 4 || cmd == 5) && p3) {
           			u8 *kbuf = kzalloc(2048, GFP_KERNEL);
           			int ret_prof = -EFAULT;
           			if (kbuf && !copy_from_user(kbuf, p3, 1024)) {
-          				mm_segment_t old_fs = get_fs();
-          				set_fs(KERNEL_DS);
-          				ret_prof = ksu_handle_prctl((int)(u32)option, (unsigned long)cmd, (unsigned long)kbuf, (unsigned long)p4, (unsigned long)&ksu_ok);
-          				set_fs(old_fs);
-          				if (cmd == 4 && ret_prof == 0) {
-          					if (copy_to_user(p3, kbuf, 1024))
+          				if (cmd == 5) {
+          					ret_prof = ksu_set_app_profile(kbuf, true);
+          					pr_info("KernelSU: direct set_profile uid=%u ver=%u key=%s allow_su=%u ret=%d\\n",
+          						caller_uid, *(u32 *)kbuf, (char *)(kbuf + 4), kbuf[264], ret_prof);
+          				} else {
+          					ret_prof = ksu_get_app_profile(kbuf);
+          					if (ret_prof == 0 && copy_to_user(p3, kbuf, 1024))
           						ret_prof = -EFAULT;
           				}
           				if (ret_prof == 0 && p5 && copy_to_user(p5, &ksu_ok, sizeof(ksu_ok)))
           					ret_prof = -EFAULT;
           			}
           			kfree(kbuf);
-          			pr_info("KernelSU: compat cmd=%u result=%d\\n", cmd, ret_prof);
           			return ret_prof;
           		}
           		return ksu_handle_prctl((int)(u32)option, (unsigned long)cmd, (unsigned long)p3, (unsigned long)p4, (unsigned long)p5);
@@ -123,7 +124,7 @@ jobs:
 
           with open("kernel/sys.c", "w") as f:
               f.write(content)
-          print("Sukses memasang hook final 12340 + compat_app_profile 1:1 di kernel/sys.c!")
+          print("Sukses memasang direct ksu_set_app_profile di kernel/sys.c!")
           EOF
 
           # 1d. Patch core_hook.c untuk 32-bit compat App Profile (Umount + SuperUser) & Manager UID
