@@ -49,8 +49,7 @@ jobs:
 
           # 1b. Pastikan ksu.c mencetak log dmesg saat boot
           sed -i 's/ksu_core_init();/pr_info("KernelSU: kernelsu_init triggered!\\n"); ksu_core_init();/g' KernelSU/kernel/ksu.c
-
-          # 1c. Hook prctl di security_task_prctl (Fix 12340: auto-bind manager + compat_ptr + CMD_IS_SU_ENABLED)
+          # 1c. Hook prctl di security_task_prctl (Fix 12340: compat_ptr + CMD_IS_SU_ENABLED)
           python3 << 'EOF'
           with open("kernel/sys.c", "r") as f:
               content = f.read()
@@ -58,7 +57,6 @@ jobs:
           hook_code = """if ((u32)option == 0xdeadbeef) {
           		extern int ksu_handle_prctl(int option, unsigned long arg2, unsigned long arg3, unsigned long arg4, unsigned long arg5);
           		extern void escape_to_root(void);
-          		
           		u32 ksu_ver = 12340;
           		u32 ksu_ok = 0xdeadbeef;
           		u32 cmd = (u32)arg2;
@@ -74,14 +72,12 @@ jobs:
           				pr_warn("KernelSU: copy magic failed\\n");
           			return 0;
           		}
-          		
+          		if (cmd == 0) {
           			ksu_handle_prctl((int)(u32)option, 0, (unsigned long)p3, (unsigned long)p4, (unsigned long)p5);
           			escape_to_root();
           			if (p5 && copy_to_user(p5, &ksu_ok, sizeof(ksu_ok)))
           				pr_warn("KernelSU: copy magic cmd0 failed\\n");
           			return 0;
-          		}
-          		
           		}
           		if (cmd == 9 || cmd == 15) {
           			u8 su_en = 1;
@@ -104,6 +100,7 @@ jobs:
               f.write(content)
           print("Sukses memasang hook final 12340 di kernel/sys.c!")
           EOF
+
           # 1d. Patch core_hook.c untuk 32-bit compat App Profile (Umount + SuperUser) & Manager UID
           python3 << 'EOF'
           import re
