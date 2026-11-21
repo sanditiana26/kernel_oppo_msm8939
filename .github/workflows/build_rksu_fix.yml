@@ -341,6 +341,12 @@ jobs:
               f.write(unistd32)
           print("Sukses mendaftarkan syscall 384 & 391!")
           '
+      
+          # 1.1 Perbaiki error "copy su_en failed" untuk ROM 32-bit (compat=1)
+          sed -i 's/(void __user \*)arg3/is_compat_task() ? compat_ptr(arg3) : (void __user \*)arg3/g' drivers/kernelsu/core_hook.c
+          
+          # 2.1 Matikan paksa Safe Mode agar saklar tidak terkunci
+          sed -i 's/ksu_safe_mode = true;/ksu_safe_mode = false;/g' drivers/kernelsu/core_hook.c
 
 
           # 2. Fix error 'request for member val' pada Kernel 3.10
