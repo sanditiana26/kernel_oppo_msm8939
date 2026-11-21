@@ -49,7 +49,153 @@ jobs:
 
           # 1b. Pastikan ksu.c mencetak log dmesg saat boot
           sed -i 's/ksu_core_init();/pr_info("KernelSU: kernelsu_init triggered!\\n"); ksu_core_init();/g' KernelSU/kernel/ksu.c
-          
+          # 1b. Fix 32-bit compat (ARMv7) untuk CMD_GET_APP_PROFILE (4) & CMD_SET_APP_PROFILE (5)
+          python3 << 'EOF'
+          with open("KernelSU/kernel/core_hook.c", "r") as f:
+              code = f.read()
+
+          compat_code = """#include <linux/compat.h>
+          struct compat_root_profile {
+          	int32_t uid;
+          	int32_t gid;
+          	int32_t groups_count;
+          	int32_t groups[KSU_MAX_GROUPS];
+          	struct {
+          		compat_u64 effective;
+          		compat_u64 permitted;
+          		compat_u64 inheritable;
+          	} capabilities;
+          	char selinux_domain[KSU_SELINUX_DOMAIN];
+          	compat_u64 namespaces;
+          };
+
+          struct compat_non_root_profile {
+          	bool umount_modules;
+          };
+
+          struct compat_app_profile {
+          	u32 version;
+          	char key[KSU_MAX_PACKAGE_NAME];
+          	int32_t current_uid;
+          	bool allow_su;
+          	union {
+          		struct {
+          			bool use_default;
+          			char template_name[KSU_MAX_PACKAGE_NAME];
+          			struct compat_root_profile profile;
+          		} rp_config;
+          		struct {
+          			bool use_default;
+          			struct compat_non_root_profile profile;
+          		} nrp_config;
+          	};
+          };
+
+          static int ksu_handle_compat_app_profile(u32 cmd, void __user *arg3, void __user *arg5)
+          {
+          	struct compat_app_profile *cprof;
+          	struct app_profile *prof;
+          	u32 ksu_ok = 0xdeadbeef;
+          	int ret = -EFAULT;
+
+          	cprof = kzalloc(sizeof(*cprof), GFP_KERNEL);
+          	prof = kzalloc(sizeof(*prof), GFP_KERNEL);
+          	if (!cprof || !prof) {
+          		ret = -ENOMEM;
+          		goto out;
+          	}
+
+          	if (copy_from_user(cprof, arg3, sizeof(*cprof)))
+          		goto out;
+
+          	prof->version = cprof->version;
+          	memcpy(prof->key, cprof->key, sizeof(prof->key));
+          	prof->current_uid = cprof->current_uid;
+          	prof->allow_su = cprof->allow_su;
+
+          	if (cmd == CMD_GET_APP_PROFILE) {
+          		ret = ksu_get_app_profile(prof);
+          		if (ret == 0) {
+          			cprof->version = prof->version;
+          			memcpy(cprof->key, prof->key, sizeof(cprof->key));
+          			cprof->current_uid = prof->current_uid;
+          			cprof->allow_su = prof->allow_su;
+          			if (prof->allow_su) {
+          				cprof->rp_config.use_default = prof->rp_config.use_default;
+          				memcpy(cprof->rp_config.template_name, prof->rp_config.template_name, sizeof(cprof->rp_config.template_name));
+          				cprof->rp_config.profile.uid = prof->rp_config.profile.uid;
+          				cprof->rp_config.profile.gid = prof->rp_config.profile.gid;
+          				cprof->rp_config.profile.groups_count = prof->rp_config.profile.groups_count;
+          				memcpy(cprof->rp_config.profile.groups, prof->rp_config.profile.groups, sizeof(cprof->rp_config.profile.groups));
+          				cprof->rp_config.profile.capabilities.effective = prof->rp_config.profile.capabilities.effective;
+          				cprof->rp_config.profile.capabilities.permitted = prof->rp_config.profile.capabilities.permitted;
+          				cprof->rp_config.profile.capabilities.inheritable = prof->rp_config.profile.capabilities.inheritable;
+          				memcpy(cprof->rp_config.profile.selinux_domain, prof->rp_config.profile.selinux_domain, sizeof(cprof->rp_config.profile.selinux_domain));
+          				cprof->rp_config.profile.namespaces = prof->rp_config.profile.namespaces;
+          			} else {
+          				cprof->nrp_config.use_default = prof->nrp_config.use_default;
+          				cprof->nrp_config.profile.umount_modules = prof->nrp_config.profile.umount_modules;
+          			}
+          			if (copy_to_user(arg3, cprof, sizeof(*cprof))) {
+          				ret = -EFAULT;
+          				goto out;
+          			}
+          			if (arg5 && copy_to_user(arg5, &ksu_ok, sizeof(ksu_ok))) {
+          				ret = -EFAULT;
+          				goto out;
+          			}
+          		}
+          		goto out;
+          	}
+
+          	if (cmd == CMD_SET_APP_PROFILE) {
+          		if (prof->allow_su) {
+          			prof->rp_config.use_default = cprof->rp_config.use_default;
+          			memcpy(prof->rp_config.template_name, cprof->rp_config.template_name, sizeof(prof->rp_config.template_name));
+          			prof->rp_config.profile.uid = cprof->rp_config.profile.uid;
+          			prof->rp_config.profile.gid = cprof->rp_config.profile.gid;
+          			prof->rp_config.profile.groups_count = cprof->rp_config.profile.groups_count;
+          			memcpy(prof->rp_config.profile.groups, cprof->rp_config.profile.groups, sizeof(prof->rp_config.profile.groups));
+          			prof->rp_config.profile.capabilities.effective = cprof->rp_config.profile.capabilities.effective;
+          			prof->rp_config.profile.capabilities.permitted = cprof->rp_config.profile.capabilities.permitted;
+          			prof->rp_config.profile.capabilities.inheritable = cprof->rp_config.profile.capabilities.inheritable;
+          			memcpy(prof->rp_config.profile.selinux_domain, cprof->rp_config.profile.selinux_domain, sizeof(prof->rp_config.profile.selinux_domain));
+          			prof->rp_config.profile.namespaces = cprof->rp_config.profile.namespaces;
+          		} else {
+          			prof->nrp_config.use_default = cprof->nrp_config.use_default;
+          			prof->nrp_config.profile.umount_modules = cprof->nrp_config.profile.umount_modules;
+          		}
+          		ret = ksu_set_app_profile(prof, true);
+          		if (ret == 0 && arg5 && copy_to_user(arg5, &ksu_ok, sizeof(ksu_ok)))
+          			ret = -EFAULT;
+          	}
+
+          out:
+          	kfree(cprof);
+          	kfree(prof);
+          	return ret;
+          }
+          """
+
+          target_fn = "int ksu_handle_prctl("
+          assert target_fn in code, "ksu_handle_prctl tidak ditemukan di core_hook.c"
+          code = code.replace(target_fn, compat_code + "\n" + target_fn, 1)
+
+          hook_point = "if (cmd == CMD_GET_APP_PROFILE"
+          compat_dispatch = """if (is_compat_task() && (cmd == CMD_GET_APP_PROFILE || cmd == CMD_SET_APP_PROFILE)) {
+          		if (!ksu_is_manager_uid_valid() || current_uid().val != ksu_get_manager_uid())
+          			return -EPERM;
+          		return ksu_handle_compat_app_profile(cmd, arg3, arg5);
+          	}
+          	"""
+          assert hook_point in code, "CMD_GET_APP_PROFILE tidak ditemukan di core_hook.c"
+          code = code.replace(hook_point, compat_dispatch + hook_point, 1)
+
+          with open("KernelSU/kernel/core_hook.c", "w") as f:
+              f.write(code)
+          print("Sukses menyuntikkan compat_app_profile untuk ARM 32-bit!")
+          EOF
+
           # 1c. Hook prctl di security_task_prctl (Fix 12340: compat_ptr + CMD_IS_SU_ENABLED & SafeMode)
           python3 << 'EOF'
           with open("kernel/sys.c", "r") as f:
