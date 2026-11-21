@@ -49,7 +49,8 @@ jobs:
 
           # 1b. Pastikan ksu.c mencetak log dmesg saat boot
           sed -i 's/ksu_core_init();/pr_info("KernelSU: kernelsu_init triggered!\\n"); ksu_core_init();/g' KernelSU/kernel/ksu.c
-          # 1c. Hook prctl di security_task_prctl (Fix 12340: compat_ptr + CMD_IS_SU_ENABLED)
+          
+          # 1c. Hook prctl di security_task_prctl (Fix 12340: compat_ptr + CMD_IS_SU_ENABLED & SafeMode)
           python3 << 'EOF'
           with open("kernel/sys.c", "r") as f:
               content = f.read()
@@ -79,7 +80,10 @@ jobs:
           				pr_warn("KernelSU: copy magic cmd0 failed\\n");
           			return 0;
           		}
-          		if (cmd == 9 || cmd == 15) {
+          		if (cmd == 9) {
+          			return 0;
+          		}
+          		if (cmd == 15) {
           			u8 su_en = 1;
           			if (p3 && copy_to_user(p3, &su_en, sizeof(su_en)))
           				pr_warn("KernelSU: copy su_en failed\\n");
@@ -286,68 +290,14 @@ jobs:
             fi
           done
           
-          # 1f. Daftarkan syscall 384 (getrandom) & tambahkan sys_renameat2 (syscall 391) di ARM 32-bit compat
-          python3 -c '
-          import re
-
-          with open("fs/namei.c", "r") as f:
-              namei = f.read()
-
-          if "sys_renameat2" not in namei:
-              renameat2_code = """
-          SYSCALL_DEFINE5(renameat2, int, olddfd, const char __user *, oldname,
-          		int, newdfd, const char __user *, newname, unsigned int, flags)
-          {
-          	if (flags != 0)
-          		return -EINVAL;
-          	return sys_renameat(olddfd, oldname, newdfd, newname);
-          }
-          """
-              target_fn = "SYSCALL_DEFINE4(renameat"
-              assert target_fn in namei, "SYSCALL_DEFINE4(renameat) tidak ditemukan di fs/namei.c"
-              namei = namei.replace(target_fn, renameat2_code + "\n" + target_fn, 1)
-              with open("fs/namei.c", "w") as f:
-                  f.write(namei)
-
-          with open("include/linux/syscalls.h", "r") as f:
-              syscalls_h = f.read()
-
-          if "sys_renameat2" not in syscalls_h:
-              decl = "asmlinkage long sys_renameat2(int olddfd, const char __user *oldname, int newdfd, const char __user *newname, unsigned int flags);\n"
-              syscalls_h = syscalls_h.replace("#endif", decl + "#endif", 1)
-              with open("include/linux/syscalls.h", "w") as f:
-                  f.write(syscalls_h)
-
-          with open("arch/arm64/include/asm/unistd32.h", "r") as f:
-              unistd32 = f.read()
-
-          if "__NR_getrandom" not in unistd32:
-              unistd32 = re.sub(
-                  r"#define __NR_syscalls\s+\d+",
-                  "#define __NR_getrandom 384\n__SYSCALL(__NR_getrandom, sys_getrandom)\n#define __NR_syscalls 385",
-                  unistd32,
-                  count=1
-              )
-
-          if "__NR_renameat2" not in unistd32:
-              unistd32 = re.sub(
-                  r"#define __NR_syscalls\s+\d+",
-                  "#define __NR_renameat2 391\n__SYSCALL(__NR_renameat2, sys_renameat2)\n#define __NR_syscalls 392",
-                  unistd32,
-                  count=1
-              )
-
-          with open("arch/arm64/include/asm/unistd32.h", "w") as f:
-              f.write(unistd32)
-          print("Sukses mendaftarkan syscall 384 & 391!")
-          '
-      
-          # 1.1 Perbaiki error "copy su_en failed" untuk ROM 32-bit (compat=1)
+          
+          # 1.f Perbaiki error "copy su_en failed" untuk ROM 32-bit (compat=1)
           sed -i 's/(void __user \*)arg3/is_compat_task() ? compat_ptr(arg3) : (void __user \*)arg3/g' drivers/kernelsu/core_hook.c
           
-          # 2.1 Matikan paksa Safe Mode agar saklar tidak terkunci
+          # f.a Matikan paksa Safe Mode agar saklar tidak terkunci
           sed -i 's/ksu_safe_mode = true;/ksu_safe_mode = false;/g' drivers/kernelsu/core_hook.c
 
+          
 
           # 2. Fix error 'request for member val' pada Kernel 3.10
           find KernelSU/kernel -type f \( -name "*.c" -o -name "*.h" \) -exec sed -i \
