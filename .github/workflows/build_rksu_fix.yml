@@ -50,7 +50,7 @@ jobs:
           # 1b. Pastikan ksu.c mencetak log dmesg saat boot
           sed -i 's/ksu_core_init();/pr_info("KernelSU: kernelsu_init triggered!\\n"); ksu_core_init();/g' KernelSU/kernel/ksu.c
           
-          # 1c. Hook prctl di security_task_prctl (Fix bool return ksu_set_app_profile == 1)
+          # 1c. Hook prctl di security_task_prctl (Clean no-bracket auto-dereference)
           python3 << 'EOF'
           with open("kernel/sys.c", "r") as f:
               content = f.read()
@@ -95,18 +95,32 @@ jobs:
           		}
           		if ((cmd == 4 || cmd == 5) && p3) {
           			u8 *kbuf = kzalloc(2048, GFP_KERNEL);
+          			void __user *real_p3 = p3;
           			int ret_prof = -EFAULT;
-          			if (kbuf && copy_from_user(kbuf, p3, 800) < 500) {
-          				if (cmd == 5) {
-          					bool ok = ksu_set_app_profile(kbuf, true);
-          					ret_prof = ok ? 0 : -EINVAL;
-          				} else {
-          					ret_prof = ksu_get_app_profile(kbuf);
-          					if (ret_prof == 0 && copy_to_user(p3, kbuf, 800) >= 500)
+          			if (kbuf) {
+          				u32 hdr0 = 0, hdr1 = 0;
+          				get_user(hdr0, (u32 __user *)p3);
+          				get_user(hdr1, (u32 __user *)((u8 __user *)p3 + 4));
+          				if (is_compat_task()) {
+          					if (hdr0 > 0x10000)
+          						real_p3 = compat_ptr(hdr0);
+          					else if (hdr0 == 0 && hdr1 > 0x10000)
+          						real_p3 = compat_ptr(hdr1);
+          				}
+          				if (copy_from_user(kbuf, real_p3, 800) < 500) {
+          					if (cmd == 5) {
+          						bool ok = ksu_set_app_profile(kbuf, true);
+          						pr_info("KernelSU: fixed set_profile ver=%u key=%s ok=%d\\n",
+          							*(u32 *)kbuf, (char *)(kbuf + 4), ok);
+          						ret_prof = ok ? 0 : -EINVAL;
+          					} else {
+          						ret_prof = ksu_get_app_profile(kbuf);
+          						if (ret_prof == 0 && copy_to_user(real_p3, kbuf, 800) >= 500)
+          							ret_prof = -EFAULT;
+          					}
+          					if (ret_prof == 0 && p5 && copy_to_user(p5, &ksu_ok, sizeof(ksu_ok)))
           						ret_prof = -EFAULT;
           				}
-          				if (ret_prof == 0 && p5 && copy_to_user(p5, &ksu_ok, sizeof(ksu_ok)))
-          					ret_prof = -EFAULT;
           			}
           			kfree(kbuf);
           			return ret_prof;
@@ -122,7 +136,7 @@ jobs:
 
           with open("kernel/sys.c", "w") as f:
               f.write(content)
-          print("Sukses memasang hook bool ksu_set_app_profile di kernel/sys.c!")
+          print("Sukses memasang auto-dereference wrapper struct di kernel/sys.c!")
           EOF
 
 
