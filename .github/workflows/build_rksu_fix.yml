@@ -57,7 +57,6 @@ jobs:
           with open("KernelSU/kernel/ksu.h", "r") as f:
               ksu_h = f.read()
 
-          # Ekstrak struct lengkap dengan menghitung kurung kurawal { } agar nested union tidak terpotong
           def extract_struct(text, name):
               m = re.search(rf'\bstruct\s+{name}\s*\{{', text)
               if not m:
@@ -154,16 +153,18 @@ jobs:
           						kprof->current_uid = cprof->current_uid;
           						kprof->allow_su = cprof->allow_su;
           						if (kprof->allow_su) {
-          							memcpy(&kprof->rp_config, &cprof->rp_config, sizeof(cprof->rp_config));
+          							kprof->rp_config.use_default = cprof->rp_config.use_default;
+          							kprof->rp_config.template_name[0] = 0;
+          							memcpy(kprof->rp_config.template_name, cprof->rp_config.template_name, sizeof(kprof->rp_config.template_name));
           							kprof->rp_config.profile.uid = cprof->rp_config.profile.uid;
           							kprof->rp_config.profile.gid = cprof->rp_config.profile.gid;
           							kprof->rp_config.profile.groups_count = cprof->rp_config.profile.groups_count;
           							memcpy(kprof->rp_config.profile.groups, cprof->rp_config.profile.groups, sizeof(kprof->rp_config.profile.groups));
-          							kprof->rp_config.profile.capabilities = cprof->rp_config.profile.capabilities;
+          							memcpy(&kprof->rp_config.profile.capabilities, &cprof->rp_config.profile.capabilities, sizeof(kprof->rp_config.profile.capabilities));
           							memcpy(kprof->rp_config.profile.selinux_domain, cprof->rp_config.profile.selinux_domain, sizeof(kprof->rp_config.profile.selinux_domain));
           							kprof->rp_config.profile.namespaces = cprof->rp_config.profile.namespaces;
           						} else {
-          							memcpy(&kprof->nrp_config, &cprof->nrp_config, sizeof(cprof->nrp_config));
+          							kprof->nrp_config.use_default = cprof->nrp_config.use_default;
           							kprof->nrp_config.profile.umount_modules = cprof->nrp_config.profile.umount_modules;
           						}
           						if (cmd == 5) {
@@ -179,16 +180,17 @@ jobs:
           								cprof->current_uid = kprof->current_uid;
           								cprof->allow_su = kprof->allow_su;
           								if (kprof->allow_su) {
-          									memcpy(&cprof->rp_config, &kprof->rp_config, sizeof(cprof->rp_config));
+          									cprof->rp_config.use_default = kprof->rp_config.use_default;
+          									memcpy(cprof->rp_config.template_name, kprof->rp_config.template_name, sizeof(cprof->rp_config.template_name));
           									cprof->rp_config.profile.uid = kprof->rp_config.profile.uid;
           									cprof->rp_config.profile.gid = kprof->rp_config.profile.gid;
           									cprof->rp_config.profile.groups_count = kprof->rp_config.profile.groups_count;
           									memcpy(cprof->rp_config.profile.groups, kprof->rp_config.profile.groups, sizeof(cprof->rp_config.profile.groups));
-          									cprof->rp_config.profile.capabilities = kprof->rp_config.profile.capabilities;
+          									memcpy(&cprof->rp_config.profile.capabilities, &kprof->rp_config.profile.capabilities, sizeof(cprof->rp_config.profile.capabilities));
           									memcpy(cprof->rp_config.profile.selinux_domain, kprof->rp_config.profile.selinux_domain, sizeof(cprof->rp_config.profile.selinux_domain));
           									cprof->rp_config.profile.namespaces = kprof->rp_config.profile.namespaces;
           								} else {
-          									memcpy(&cprof->nrp_config, &kprof->nrp_config, sizeof(cprof->nrp_config));
+          									cprof->nrp_config.use_default = kprof->nrp_config.use_default;
           									cprof->nrp_config.profile.umount_modules = kprof->nrp_config.profile.umount_modules;
           								}
           								if (copy_to_user(p3, cprof, sizeof(*cprof)) != 0)
@@ -227,7 +229,6 @@ jobs:
               f.write(content)
           print("Sukses memasang 32-bit compat_app_profile terverifikasi di kernel/sys.c!")
           EOF
-
 
           # 1d. Patch core_hook.c untuk 32-bit compat App Profile (Umount + SuperUser) & Manager UID
           python3 << 'EOF'
