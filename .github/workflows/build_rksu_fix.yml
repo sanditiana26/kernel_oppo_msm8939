@@ -1,4 +1,4 @@
--name: Build Oppo A37f Kernel with RKSU Legacy (True Universal v5 final)
+name: Build Oppo A37f Kernel with RKSU Legacy (True Universal v5 final)
 
 on:
   workflow_dispatch:
