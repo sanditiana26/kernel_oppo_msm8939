@@ -49,16 +49,55 @@ jobs:
 
           # 1b. Pastikan ksu.c mencetak log dmesg saat boot
           sed -i 's/ksu_core_init();/pr_info("KernelSU: kernelsu_init triggered!\\n"); ksu_core_init();/g' KernelSU/kernel/ksu.c
-          
-           # 1c. Hook prctl di security_task_prctl (Clean no-bracket auto-dereference)
+
+                     # 1c. Hook prctl di security_task_prctl (Auto-generate 32-bit compat struct dari ksu.h)
           python3 << 'EOF'
+          import re
+
+          with open("KernelSU/kernel/ksu.h", "r") as f:
+              ksu_h = f.read()
+
+          # Ekstrak struct root_profile, non_root_profile, dan app_profile asli dari ksu.h
+          def extract_struct(text, name):
+              m = re.search(rf'(struct\s+{name}\s*\{{.*?\}};)', text, re.S)
+              return m.group(1) if m else ""
+
+          s_root = extract_struct(ksu_h, "root_profile")
+          s_nonroot = extract_struct(ksu_h, "non_root_profile")
+          s_app = extract_struct(ksu_h, "app_profile")
+
+          assert s_root and s_nonroot and s_app, "Gagal membaca struct dari ksu.h!"
+
+          # Buat versi compat 32-bit (semua u64/s64/__u64/__s64 di-align 4 byte seperti ABI arm32)
+          def make_compat(s, old_name, new_name):
+              s = s.replace(f"struct {old_name}", f"struct {new_name}")
+              s = s.replace("struct root_profile", "struct compat_root_profile")
+              s = s.replace("struct non_root_profile", "struct compat_non_root_profile")
+              s = re.sub(r'\b(__?[us]64)\s+([a-zA-Z0-9_]+)\s*;', r'\1 \2 __attribute__((aligned(4)));', s)
+              return s
+
+          c_root = make_compat(s_root, "root_profile", "compat_root_profile")
+          c_nonroot = make_compat(s_nonroot, "non_root_profile", "compat_non_root_profile")
+          c_app = make_compat(s_app, "app_profile", "compat_app_profile")
+
+          compat_defs = f"""#include "../drivers/kernelsu/ksu.h"
+          {c_root}
+          {c_nonroot}
+          {c_app}
+          """
+
           with open("kernel/sys.c", "r") as f:
               content = f.read()
 
+          # Sisipkan definisi struct compat sebelum fungsi SYSCALL_DEFINE5(prctl
+          prctl_decl = "SYSCALL_DEFINE5(prctl,"
+          assert prctl_decl in content, "SYSCALL_DEFINE5(prctl not found!"
+          content = content.replace(prctl_decl, compat_defs + "\n" + prctl_decl, 1)
+
           hook_code = """if ((u32)option == 0xdeadbeef) {
           		extern int ksu_handle_prctl(int option, unsigned long arg2, unsigned long arg3, unsigned long arg4, unsigned long arg5);
-          		extern bool ksu_set_app_profile(void *profile, bool persist);
-          		extern int ksu_get_app_profile(void *profile);
+          		extern bool ksu_set_app_profile(struct app_profile *profile, bool persist);
+          		extern int ksu_get_app_profile(struct app_profile *profile);
           		extern void escape_to_root(void);
           		u32 ksu_ver = 12340;
           		u32 ksu_ok = 0xdeadbeef;
@@ -94,35 +133,75 @@ jobs:
           			return 0;
           		}
           		if ((cmd == 4 || cmd == 5) && p3) {
-          			u8 *kbuf = kzalloc(2048, GFP_KERNEL);
-          			void __user *real_p3 = p3;
+          			struct app_profile *kprof = kzalloc(sizeof(*kprof), GFP_KERNEL);
+          			struct compat_app_profile *cprof = kzalloc(sizeof(*cprof), GFP_KERNEL);
           			int ret_prof = -EFAULT;
-          			if (kbuf) {
-          				u32 hdr0 = 0, hdr1 = 0;
-          				get_user(hdr0, (u32 __user *)p3);
-          				get_user(hdr1, (u32 __user *)((u8 __user *)p3 + 4));
+          			if (kprof && cprof) {
           				if (is_compat_task()) {
-          					if (hdr0 > 0x10000)
-          						real_p3 = compat_ptr(hdr0);
-          					else if (hdr0 == 0 && hdr1 > 0x10000)
-          						real_p3 = compat_ptr(hdr1);
-          				}
-          				if (copy_from_user(kbuf, real_p3, 800) < 500) {
-          					if (cmd == 5) {
-          						bool ok = ksu_set_app_profile(kbuf, true);
-          						pr_info("KernelSU: fixed set_profile ver=%u key=%s ok=%d\\n",
-          							*(u32 *)kbuf, (char *)(kbuf + 4), ok);
-          						ret_prof = ok ? 0 : -EINVAL;
-          					} else {
-          						ret_prof = ksu_get_app_profile(kbuf);
-          						if (ret_prof == 0 && copy_to_user(real_p3, kbuf, 800) >= 500)
-          							ret_prof = -EFAULT;
+          					if (copy_from_user(cprof, p3, sizeof(*cprof)) == 0) {
+          						kprof->version = cprof->version;
+          						memcpy(kprof->key, cprof->key, sizeof(kprof->key));
+          						kprof->current_uid = cprof->current_uid;
+          						kprof->allow_su = cprof->allow_su;
+          						if (kprof->allow_su) {
+          							memcpy(&kprof->rp_config, &cprof->rp_config, sizeof(cprof->rp_config));
+          							kprof->rp_config.profile.uid = cprof->rp_config.profile.uid;
+          							kprof->rp_config.profile.gid = cprof->rp_config.profile.gid;
+          							kprof->rp_config.profile.groups_count = cprof->rp_config.profile.groups_count;
+          							memcpy(kprof->rp_config.profile.groups, cprof->rp_config.profile.groups, sizeof(kprof->rp_config.profile.groups));
+          							kprof->rp_config.profile.capabilities = cprof->rp_config.profile.capabilities;
+          							memcpy(kprof->rp_config.profile.selinux_domain, cprof->rp_config.profile.selinux_domain, sizeof(kprof->rp_config.profile.selinux_domain));
+          							kprof->rp_config.profile.namespaces = cprof->rp_config.profile.namespaces;
+          						} else {
+          							memcpy(&kprof->nrp_config, &cprof->nrp_config, sizeof(cprof->nrp_config));
+          							kprof->nrp_config.profile.umount_modules = cprof->nrp_config.profile.umount_modules;
+          						}
+          						if (cmd == 5) {
+          							bool ok = ksu_set_app_profile(kprof, true);
+          							pr_info("KernelSU: compat set_profile ver=%u key=%s su=%d ok=%d\\n",
+          								kprof->version, kprof->key, kprof->allow_su, ok);
+          							ret_prof = ok ? 0 : -EINVAL;
+          						} else {
+          							ret_prof = ksu_get_app_profile(kprof);
+          							if (ret_prof == 0) {
+          								cprof->version = kprof->version;
+          								memcpy(cprof->key, kprof->key, sizeof(cprof->key));
+          								cprof->current_uid = kprof->current_uid;
+          								cprof->allow_su = kprof->allow_su;
+          								if (kprof->allow_su) {
+          									memcpy(&cprof->rp_config, &kprof->rp_config, sizeof(cprof->rp_config));
+          									cprof->rp_config.profile.uid = kprof->rp_config.profile.uid;
+          									cprof->rp_config.profile.gid = kprof->rp_config.profile.gid;
+          									cprof->rp_config.profile.groups_count = kprof->rp_config.profile.groups_count;
+          									memcpy(cprof->rp_config.profile.groups, kprof->rp_config.profile.groups, sizeof(cprof->rp_config.profile.groups));
+          									cprof->rp_config.profile.capabilities = kprof->rp_config.profile.capabilities;
+          									memcpy(cprof->rp_config.profile.selinux_domain, kprof->rp_config.profile.selinux_domain, sizeof(cprof->rp_config.profile.selinux_domain));
+          									cprof->rp_config.profile.namespaces = kprof->rp_config.profile.namespaces;
+          								} else {
+          									memcpy(&cprof->nrp_config, &kprof->nrp_config, sizeof(cprof->nrp_config));
+          									cprof->nrp_config.profile.umount_modules = kprof->nrp_config.profile.umount_modules;
+          								}
+          								if (copy_to_user(p3, cprof, sizeof(*cprof)) != 0)
+          									ret_prof = -EFAULT;
+          							}
+          						}
           					}
-          					if (ret_prof == 0 && p5 && copy_to_user(p5, &ksu_ok, sizeof(ksu_ok)))
-          						ret_prof = -EFAULT;
+          				} else {
+          					if (copy_from_user(kprof, p3, sizeof(*kprof)) == 0) {
+          						if (cmd == 5)
+          							ret_prof = ksu_set_app_profile(kprof, true) ? 0 : -EINVAL;
+          						else {
+          							ret_prof = ksu_get_app_profile(kprof);
+          							if (ret_prof == 0 && copy_to_user(p3, kprof, sizeof(*kprof)) != 0)
+          								ret_prof = -EFAULT;
+          						}
+          					}
           				}
+          				if (ret_prof == 0 && p5 && copy_to_user(p5, &ksu_ok, sizeof(ksu_ok)))
+          					ret_prof = -EFAULT;
           			}
-          			kfree(kbuf);
+          			kfree(kprof);
+          			kfree(cprof);
           			return ret_prof;
           		}
           		return ksu_handle_prctl((int)(u32)option, (unsigned long)cmd, (unsigned long)p3, (unsigned long)p4, (unsigned long)p5);
@@ -136,8 +215,10 @@ jobs:
 
           with open("kernel/sys.c", "w") as f:
               f.write(content)
-          print("Sukses memasang auto-dereference wrapper struct di kernel/sys.c!")
+          print("Sukses memasang 32-bit compat_app_profile terverifikasi di kernel/sys.c!")
           EOF
+
+           
 
           # 1d. Patch core_hook.c untuk 32-bit compat App Profile (Umount + SuperUser) & Manager UID
           python3 << 'EOF'
