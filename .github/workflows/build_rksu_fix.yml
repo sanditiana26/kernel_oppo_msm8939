@@ -420,6 +420,10 @@ jobs:
               with open("security/selinux/avc.c", "w") as f:
                   f.write(avc)
           EOF
+      - name: Print RKSU app_profile struct
+        run: |
+          grep -rn -A 45 "struct app_profile" drivers/kernelsu/
+
       - name: Clone Toolchains (GCC 4.9)
         run: |
           GH="https://github.com"
