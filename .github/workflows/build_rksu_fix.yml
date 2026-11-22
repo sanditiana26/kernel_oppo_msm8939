@@ -50,7 +50,7 @@ jobs:
           # 1b. Pastikan ksu.c mencetak log dmesg saat boot
           sed -i 's/ksu_core_init();/pr_info("KernelSU: kernelsu_init triggered!\\n"); ksu_core_init();/g' KernelSU/kernel/ksu.c
 
-                    # 1c. Hook prctl di security_task_prctl (Auto-generate 32-bit compat struct + pointer dereference)
+          # 1c. Hook prctl di security_task_prctl (Ringkas & Anti-Terpotong)
           python3 << 'EOF'
           import re
 
@@ -61,8 +61,7 @@ jobs:
               m = re.search(rf'\bstruct\s+{name}\s*\{{', text)
               if not m:
                   return ""
-              start = m.start()
-              depth = 0
+              start, depth = m.start(), 0
               for i in range(m.end() - 1, len(text)):
                   if text[i] == '{':
                       depth += 1
@@ -73,35 +72,47 @@ jobs:
                           return text[start:semi+1] if semi != -1 else text[start:i+1] + ";"
               return ""
 
-          s_root = extract_struct(ksu_h, "root_profile")
-          s_nonroot = extract_struct(ksu_h, "non_root_profile")
-          s_app = extract_struct(ksu_h, "app_profile")
-
-          assert s_root and s_nonroot and s_app, "Gagal membaca struct dari ksu.h!"
-
           def make_compat(s, old_name, new_name):
               s = s.replace(f"struct {old_name}", f"struct {new_name}", 1)
               s = s.replace("struct root_profile", "struct compat_root_profile")
               s = s.replace("struct non_root_profile", "struct compat_non_root_profile")
               s = re.sub(r'\b(__?[us]64|u64|s64)\s+([a-zA-Z0-9_]+)\s*;', r'\1 \2 __attribute__((aligned(4)));', s)
-              s = s[:-1] + " __attribute__((aligned(4)));"
-              return s
+              return s[:-1] + " __attribute__((aligned(4)));"
 
-          c_root = make_compat(s_root, "root_profile", "compat_root_profile")
-          c_nonroot = make_compat(s_nonroot, "non_root_profile", "compat_non_root_profile")
-          c_app = make_compat(s_app, "app_profile", "compat_app_profile")
+          c_root = make_compat(extract_struct(ksu_h, "root_profile"), "root_profile", "compat_root_profile")
+          c_nonroot = make_compat(extract_struct(ksu_h, "non_root_profile"), "non_root_profile", "compat_non_root_profile")
+          c_app = make_compat(extract_struct(ksu_h, "app_profile"), "app_profile", "compat_app_profile")
 
           compat_defs = f"""#include "../drivers/kernelsu/ksu.h"
           {c_root}
           {c_nonroot}
           {c_app}
+          #define KSU_CP(dst, src) do {{ \\
+          	(dst)->version = (src)->version; \\
+          	memcpy((dst)->key, (src)->key, sizeof((dst)->key)); \\
+          	(dst)->current_uid = (src)->current_uid; \\
+          	(dst)->allow_su = (src)->allow_su; \\
+          	if ((src)->allow_su) {{ \\
+          		(dst)->rp_config.use_default = (src)->rp_config.use_default; \\
+          		memcpy((dst)->rp_config.template_name, (src)->rp_config.template_name, sizeof((dst)->rp_config.template_name)); \\
+          		(dst)->rp_config.profile.uid = (src)->rp_config.profile.uid; \\
+          		(dst)->rp_config.profile.gid = (src)->rp_config.profile.gid; \\
+          		(dst)->rp_config.profile.groups_count = (src)->rp_config.profile.groups_count; \\
+          		memcpy((dst)->rp_config.profile.groups, (src)->rp_config.profile.groups, sizeof((dst)->rp_config.profile.groups)); \\
+          		memcpy(&(dst)->rp_config.profile.capabilities, &(src)->rp_config.profile.capabilities, sizeof((dst)->rp_config.profile.capabilities)); \\
+          		memcpy((dst)->rp_config.profile.selinux_domain, (src)->rp_config.profile.selinux_domain, sizeof((dst)->rp_config.profile.selinux_domain)); \\
+          		(dst)->rp_config.profile.namespaces = (src)->rp_config.profile.namespaces; \\
+          	}} else {{ \\
+          		(dst)->nrp_config.use_default = (src)->nrp_config.use_default; \\
+          		(dst)->nrp_config.profile.umount_modules = (src)->nrp_config.profile.umount_modules; \\
+          	}} \\
+          }} while (0)
           """
 
           with open("kernel/sys.c", "r") as f:
               content = f.read()
 
           prctl_decl = "SYSCALL_DEFINE5(prctl,"
-          assert prctl_decl in content, "SYSCALL_DEFINE5(prctl not found!"
           content = content.replace(prctl_decl, compat_defs + "\n" + prctl_decl, 1)
 
           hook_code = """if ((u32)option == 0xdeadbeef) {
@@ -109,125 +120,81 @@ jobs:
           		extern bool ksu_set_app_profile(struct app_profile *profile, bool persist);
           		extern int ksu_get_app_profile(struct app_profile *profile);
           		extern void escape_to_root(void);
-          		u32 ksu_ver = 12340;
-          		u32 ksu_ok = 0xdeadbeef;
-          		u32 cmd = (u32)arg2;
+          		u32 ksu_ver = 12340, ksu_ok = 0xdeadbeef, cmd = (u32)arg2;
           		void __user *p3 = is_compat_task() ? compat_ptr((u32)arg3) : (void __user *)arg3;
           		void __user *p4 = is_compat_task() ? compat_ptr((u32)arg4) : (void __user *)arg4;
           		void __user *p5 = is_compat_task() ? compat_ptr((u32)arg5) : (void __user *)arg5;
           		if (cmd == 1 || cmd == 2) {
-          			if (p3 && copy_to_user(p3, &ksu_ver, sizeof(ksu_ver)))
-          				pr_warn("KernelSU: copy ver failed\\n");
-          			if (p5 && copy_to_user(p5, &ksu_ok, sizeof(ksu_ok)))
-          				pr_warn("KernelSU: copy magic failed\\n");
+          			if (p3) copy_to_user(p3, &ksu_ver, sizeof(ksu_ver));
+          			if (p5) copy_to_user(p5, &ksu_ok, sizeof(ksu_ok));
           			return 0;
           		}
           		if (cmd == 0) {
           			ksu_handle_prctl((int)(u32)option, 0, (unsigned long)p3, (unsigned long)p4, (unsigned long)p5);
           			escape_to_root();
-          			if (p5 && copy_to_user(p5, &ksu_ok, sizeof(ksu_ok)))
-          				pr_warn("KernelSU: copy magic cmd0 failed\\n");
+          			if (p5) copy_to_user(p5, &ksu_ok, sizeof(ksu_ok));
           			return 0;
           		}
-          		if (cmd == 9) {
-          			return 0;
-          		}
+          		if (cmd == 9) return 0;
           		if (cmd == 15) {
           			u8 su_en = 1;
-          			if (p3 && access_ok(VERIFY_WRITE, p3, sizeof(su_en))) {
-          				if (copy_to_user(p3, &su_en, sizeof(su_en)))
-          					pr_warn("KernelSU: copy su_en failed\\n");
-          			}
-          			if (p5 && copy_to_user(p5, &ksu_ok, sizeof(ksu_ok)))
-          				pr_warn("KernelSU: copy magic su_en failed\\n");
+          			if (p3) copy_to_user(p3, &su_en, sizeof(su_en));
+          			if (p5) copy_to_user(p5, &ksu_ok, sizeof(ksu_ok));
           			return 0;
           		}
           		if ((cmd == 4 || cmd == 5) && p3) {
           			struct app_profile *kprof = kzalloc(sizeof(*kprof), GFP_KERNEL);
           			struct compat_app_profile *cprof = kzalloc(sizeof(*cprof), GFP_KERNEL);
           			int ret_prof = -EFAULT;
-          			if (kprof && cprof) {
-          				if (is_compat_task()) {
-          					if (copy_from_user(cprof, p3, sizeof(*cprof)) == 0) {
-          						kprof->version = cprof->version;
-          						memcpy(kprof->key, cprof->key, sizeof(kprof->key));
-          						kprof->current_uid = cprof->current_uid;
-          						kprof->allow_su = cprof->allow_su;
-          						if (kprof->allow_su) {
-          							kprof->rp_config.use_default = cprof->rp_config.use_default;
-          							memcpy(kprof->rp_config.template_name, cprof->rp_config.template_name, sizeof(kprof->rp_config.template_name));
-          							kprof->rp_config.profile.uid = cprof->rp_config.profile.uid;
-          							kprof->rp_config.profile.gid = cprof->rp_config.profile.gid;
-          							kprof->rp_config.profile.groups_count = cprof->rp_config.profile.groups_count;
-          							memcpy(kprof->rp_config.profile.groups, cprof->rp_config.profile.groups, sizeof(kprof->rp_config.profile.groups));
-          							memcpy(&kprof->rp_config.profile.capabilities, &cprof->rp_config.profile.capabilities, sizeof(kprof->rp_config.profile.capabilities));
-          							memcpy(kprof->rp_config.profile.selinux_domain, cprof->rp_config.profile.selinux_domain, sizeof(kprof->rp_config.profile.selinux_domain));
-          							kprof->rp_config.profile.namespaces = cprof->rp_config.profile.namespaces;
-          						} else {
-          							kprof->nrp_config.use_default = cprof->nrp_config.use_default;
-          							kprof->nrp_config.profile.umount_modules = cprof->nrp_config.profile.umount_modules;
-          						}
-          						if (cmd == 5) {
-          							bool ok = ksu_set_app_profile(kprof, true);
-          							pr_info("KernelSU: compat set_profile ver=%u key=%s su=%d ok=%d\\n",
-          								kprof->version, kprof->key, kprof->allow_su, ok);
-          							ret_prof = ok ? 0 : -EINVAL;
-          						} else {
-          							ret_prof = ksu_get_app_profile(kprof);
-          							if (ret_prof == 0) {
-          								cprof->version = kprof->version;
-          								memcpy(cprof->key, kprof->key, sizeof(cprof->key));
-          								cprof->current_uid = kprof->current_uid;
-          								cprof->allow_su = kprof->allow_su;
-          								if (kprof->allow_su) {
-          									cprof->rp_config.use_default = kprof->rp_config.use_default;
-          									memcpy(cprof->rp_config.template_name, kprof->rp_config.template_name, sizeof(cprof->rp_config.template_name));
-          									cprof->rp_config.profile.uid = kprof->rp_config.profile.uid;
-          									cprof->rp_config.profile.gid = kprof->rp_config.profile.gid;
-          									cprof->rp_config.profile.groups_count = kprof->rp_config.profile.groups_count;
-          									memcpy(cprof->rp_config.profile.groups, kprof->rp_config.profile.groups, sizeof(cprof->rp_config.profile.groups));
-          									memcpy(&cprof->rp_config.profile.capabilities, &kprof->rp_config.profile.capabilities, sizeof(cprof->rp_config.profile.capabilities));
-          									memcpy(cprof->rp_config.profile.selinux_domain, kprof->rp_config.profile.selinux_domain, sizeof(cprof->rp_config.profile.selinux_domain));
-          									cprof->rp_config.profile.namespaces = kprof->rp_config.profile.namespaces;
-          								} else {
-          									cprof->nrp_config.use_default = kprof->nrp_config.use_default;
-          									cprof->nrp_config.profile.umount_modules = kprof->nrp_config.profile.umount_modules;
-          								}
-          								if (copy_to_user(p3, cprof, sizeof(*cprof)))
-          									ret_prof = -EFAULT;
-          							}
+          			if (kprof && cprof && is_compat_task()) {
+          				void __user *uptr = p3;
+          				if (copy_from_user(cprof, uptr, sizeof(*cprof)) == 0) {
+          					if (cprof->version != 1 && cprof->version != 2) {
+          						u32 np = 0;
+          						if (get_user(np, (u32 __user *)uptr) == 0 && np > 0x10000) {
+          							uptr = compat_ptr(np);
+          							copy_from_user(cprof, uptr, sizeof(*cprof));
           						}
           					}
-          				} else {
-          					if (copy_from_user(kprof, p3, sizeof(*kprof)) == 0) {
-          						if (cmd == 5) {
-          							ret_prof = ksu_set_app_profile(kprof, true) ? 0 : -EINVAL;
+          					if (cprof->version != 1 && cprof->version != 2 && p4) {
+          						if (copy_from_user(cprof, p4, sizeof(*cprof)) != 0 || (cprof->version != 1 && cprof->version != 2)) {
+          							u32 np4 = 0;
+          							if (get_user(np4, (u32 __user *)p4) == 0 && np4 > 0x10000) {
+          								uptr = compat_ptr(np4);
+          								copy_from_user(cprof, uptr, sizeof(*cprof));
+          							}
           						} else {
-          							ret_prof = ksu_get_app_profile(kprof);
-          							if (ret_prof == 0 && copy_to_user(p3, kprof, sizeof(*kprof)))
-          								ret_prof = -EFAULT;
+          							uptr = p4;
+          						}
+          					}
+          					KSU_CP(kprof, cprof);
+          					if (cmd == 5) {
+          						bool ok = ksu_set_app_profile(kprof, true);
+          						pr_info("KernelSU: compat set_profile ver=%u key=%s su=%d ok=%d\\n", kprof->version, kprof->key, kprof->allow_su, ok);
+          						ret_prof = ok ? 0 : -EINVAL;
+          					} else {
+          						ret_prof = ksu_get_app_profile(kprof);
+          						if (ret_prof == 0) {
+          							KSU_CP(cprof, kprof);
+          							if (copy_to_user(uptr, cprof, sizeof(*cprof))) ret_prof = -EFAULT;
           						}
           					}
           				}
           			}
           			kfree(kprof);
           			kfree(cprof);
-          			if (ret_prof == 0 && p5 && copy_to_user(p5, &ksu_ok, sizeof(ksu_ok)))
-          				pr_warn("KernelSU: copy magic prof failed\\n");
+          			if (ret_prof == 0 && p5) copy_to_user(p5, &ksu_ok, sizeof(ksu_ok));
           			return ret_prof;
           		}
           		return ksu_handle_prctl((int)(u32)option, (unsigned long)cmd, (unsigned long)p3, (unsigned long)p4, (unsigned long)p5);
           	}"""
 
           m_prctl = re.search(r'SYSCALL_DEFINE5\(prctl,[^\)]+\)\s*\{', content)
-          assert m_prctl, "Pembuka fungsi SYSCALL_DEFINE5(prctl) tidak ditemukan!"
-          insert_pos = m_prctl.end()
-          content = content[:insert_pos] + "\n\t" + hook_code + "\n" + content[insert_pos:]
+          content = content[:m_prctl.end()] + "\n\t" + hook_code + "\n" + content[m_prctl.end():]
 
           with open("kernel/sys.c", "w") as f:
               f.write(content)
           EOF
-
           # 1d. Patch core_hook.c untuk 32-bit compat App Profile (Umount + SuperUser) & Manager UID
           python3 << 'EOF'
           import re
