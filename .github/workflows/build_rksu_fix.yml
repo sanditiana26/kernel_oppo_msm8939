@@ -50,17 +50,29 @@ jobs:
           # 1b. Pastikan ksu.c mencetak log dmesg saat boot
           sed -i 's/ksu_core_init();/pr_info("KernelSU: kernelsu_init triggered!\\n"); ksu_core_init();/g' KernelSU/kernel/ksu.c
 
-                     # 1c. Hook prctl di security_task_prctl (Auto-generate 32-bit compat struct dari ksu.h)
+          # 1c. Hook prctl di security_task_prctl (Auto-generate 32-bit compat struct dari ksu.h)
           python3 << 'EOF'
           import re
 
           with open("KernelSU/kernel/ksu.h", "r") as f:
               ksu_h = f.read()
 
-          # Ekstrak struct root_profile, non_root_profile, dan app_profile asli dari ksu.h
+          # Ekstrak struct lengkap dengan menghitung kurung kurawal { } agar nested union tidak terpotong
           def extract_struct(text, name):
-              m = re.search(rf'(struct\s+{name}\s*\{{.*?\}};)', text, re.S)
-              return m.group(1) if m else ""
+              m = re.search(rf'\bstruct\s+{name}\s*\{{', text)
+              if not m:
+                  return ""
+              start = m.start()
+              depth = 0
+              for i in range(m.end() - 1, len(text)):
+                  if text[i] == '{':
+                      depth += 1
+                  elif text[i] == '}':
+                      depth -= 1
+                      if depth == 0:
+                          semi = text.find(';', i)
+                          return text[start:semi+1] if semi != -1 else text[start:i+1] + ";"
+              return ""
 
           s_root = extract_struct(ksu_h, "root_profile")
           s_nonroot = extract_struct(ksu_h, "non_root_profile")
@@ -68,12 +80,11 @@ jobs:
 
           assert s_root and s_nonroot and s_app, "Gagal membaca struct dari ksu.h!"
 
-          # Buat versi compat 32-bit (semua u64/s64/__u64/__s64 di-align 4 byte seperti ABI arm32)
           def make_compat(s, old_name, new_name):
-              s = s.replace(f"struct {old_name}", f"struct {new_name}")
+              s = s.replace(f"struct {old_name}", f"struct {new_name}", 1)
               s = s.replace("struct root_profile", "struct compat_root_profile")
               s = s.replace("struct non_root_profile", "struct compat_non_root_profile")
-              s = re.sub(r'\b(__?[us]64)\s+([a-zA-Z0-9_]+)\s*;', r'\1 \2 __attribute__((aligned(4)));', s)
+              s = re.sub(r'\b(__?[us]64|u64|s64)\s+([a-zA-Z0-9_]+)\s*;', r'\1 \2 __attribute__((aligned(4)));', s)
               return s
 
           c_root = make_compat(s_root, "root_profile", "compat_root_profile")
@@ -89,7 +100,6 @@ jobs:
           with open("kernel/sys.c", "r") as f:
               content = f.read()
 
-          # Sisipkan definisi struct compat sebelum fungsi SYSCALL_DEFINE5(prctl
           prctl_decl = "SYSCALL_DEFINE5(prctl,"
           assert prctl_decl in content, "SYSCALL_DEFINE5(prctl not found!"
           content = content.replace(prctl_decl, compat_defs + "\n" + prctl_decl, 1)
@@ -218,7 +228,6 @@ jobs:
           print("Sukses memasang 32-bit compat_app_profile terverifikasi di kernel/sys.c!")
           EOF
 
-           
 
           # 1d. Patch core_hook.c untuk 32-bit compat App Profile (Umount + SuperUser) & Manager UID
           python3 << 'EOF'
