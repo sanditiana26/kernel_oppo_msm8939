@@ -121,9 +121,6 @@ jobs:
               f.write(content)
           EOF
 
-          - name: Print fs/exec.c lines 1505-1680
-          run: |
-          sed -n '1505,1680p' fs/exec.c
           
           # 1d. Patch core_hook.c untuk 32-bit compat App Profile (Umount + SuperUser) & Manager UID
           python3 << 'EOF'
