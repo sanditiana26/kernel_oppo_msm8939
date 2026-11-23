@@ -308,56 +308,7 @@ jobs:
             fi
           done
 
-      - name: Hook compat_do_execve_common in fs/exec.c
-        run: |
-          python3 << 'EOF'
-          import re
-
-          with open("fs/exec.c", "r") as f:
-              content = f.read()
-
-          decl = (
-              "#ifdef CONFIG_KSU\n"
-              "extern int ksu_handle_execve_sucompat(int *fd, const char **filename_ptr, void *argv, void *envp, int *flags);\n"
-              "#endif\n"
-          )
-          if "ksu_handle_execve_sucompat" not in content:
-              content = content.replace("#include <linux/fs.h>", "#include <linux/fs.h>\n" + decl, 1)
-
-          # Cari fungsi compat_do_execve_common baris per baris agar tidak meleset regex
-          lines = content.splitlines(True)
-          in_compat = False
-          hooked = False
-          for i, line in enumerate(lines):
-              if "compat_do_execve_common(" in line and not line.strip().endswith(";"):
-                  in_compat = True
-              if in_compat and ("retval = unshare_files" in line or "bprm = kzalloc" in line):
-                  # Cek tipe parameter filename di header fungsi
-                  header = "".join(lines[max(0, i-25):i])
-                  if "struct filename *filename" in header:
-                      hook = (
-                          "#ifdef CONFIG_KSU\n"
-                          "\tif (!IS_ERR(filename))\n"
-                          "\t\tksu_handle_execve_sucompat((int *)AT_FDCWD, (const char **)&filename->name, NULL, NULL, NULL);\n"
-                          "#endif\n"
-                      )
-                  else:
-                      hook = (
-                          "#ifdef CONFIG_KSU\n"
-                          "\tksu_handle_execve_sucompat((int *)AT_FDCWD, &filename, NULL, NULL, NULL);\n"
-                          "#endif\n"
-                      )
-                  lines.insert(i, hook)
-                  hooked = True
-                  break
-
-          assert hooked, "GAGAL menemukan posisi bprm/unshare_files di compat_do_execve_common!"
-          with open("fs/exec.c", "w") as f:
-              f.writelines(lines)
-          print("BERHASIL hook compat_do_execve_common di baris:", i)
-          EOF
-          grep -n -C 8 "ksu_handle_execve_sucompat" fs/exec.c
-
+      
           # 2.1 Matikan paksa Safe Mode agar saklar tidak terkunci
           sed -i 's/ksu_safe_mode = true;/ksu_safe_mode = false;/g' drivers/kernelsu/core_hook.c
 
