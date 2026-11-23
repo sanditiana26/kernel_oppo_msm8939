@@ -50,7 +50,8 @@ jobs:
           # 1b. Pastikan ksu.c mencetak log dmesg saat boot
           sed -i 's/ksu_core_init();/pr_info("KernelSU: kernelsu_init triggered!\\n"); ksu_core_init();/g' KernelSU/kernel/ksu.c
 
-          # 1c. Hook prctl di kernel/sys.c (RKSU v12340 - Mount & SU aktif penuh)
+          
+          # 1c. Hook prctl di kernel/sys.c (RKSU v12340 - Mount & SU aktif + tidak mental)
           python3 << 'EOF'
           import re
 
@@ -64,7 +65,7 @@ jobs:
           hook_code = """if ((u32)option == 0xdeadbeef) {
           		extern int ksu_handle_prctl(int option, unsigned long arg2, unsigned long arg3, unsigned long arg4, unsigned long arg5);
           		extern bool ksu_set_app_profile(struct app_profile *profile, bool persist);
-          		extern int ksu_get_app_profile(struct app_profile *profile);
+          		extern bool ksu_get_app_profile(struct app_profile *profile);
           		extern void escape_to_root(void);
           		u32 ksu_ver = 12340, ksu_ok = 0xdeadbeef, cmd = (u32)arg2;
           		void __user *p3 = is_compat_task() ? compat_ptr((u32)arg3) : (void __user *)arg3;
@@ -93,14 +94,17 @@ jobs:
           			int ret_prof = -EFAULT;
           			if (kprof && copy_from_user(kprof, p3, sizeof(*kprof)) == 0) {
           				if (cmd == 11) {
-          					bool persist = ((u32)arg4 != 0);
+          					bool persist = true;
           					bool ok = ksu_set_app_profile(kprof, persist);
           					pr_info("KernelSU: set_profile ver=%u key=%s su=%d ok=%d\\n", kprof->version, kprof->key, kprof->allow_su, ok);
           					ret_prof = ok ? 0 : -EINVAL;
           				} else {
-          					ret_prof = ksu_get_app_profile(kprof);
-          					if (ret_prof == 0 && copy_to_user(p3, kprof, sizeof(*kprof)))
-          						ret_prof = -EFAULT;
+          					bool found = ksu_get_app_profile(kprof);
+          					if (found) {
+          						ret_prof = copy_to_user(p3, kprof, sizeof(*kprof)) ? -EFAULT : 0;
+          					} else {
+          						ret_prof = -ENOENT;
+          					}
           				}
           			}
           			kfree(kprof);
@@ -116,6 +120,7 @@ jobs:
           with open("kernel/sys.c", "w") as f:
               f.write(content)
           EOF
+
 
 
           # 1d. Patch core_hook.c untuk 32-bit compat App Profile (Umount + SuperUser) & Manager UID
