@@ -308,7 +308,100 @@ jobs:
             fi
           done
 
-      
+      - name: Hook compat_do_execve in fs/exec.c
+        run: |
+          python3 << 'EOF'
+          import re
+
+          with open("fs/exec.c", "r") as f:
+              content = f.read()
+
+          decl = (
+              "#ifdef CONFIG_KSU\n"
+              "extern int ksu_handle_execve_sucompat(int *fd, const char **filename_ptr, void *argv, void *envp, int *flags);\n"
+              "#endif\n"
+          )
+          if "ksu_handle_execve_sucompat" not in content:
+              content = content.replace("#include <linux/fs.h>", "#include <linux/fs.h>\n" + decl, 1)
+
+          lines = content.splitlines(True)
+          in_compat = False
+          brace_opened = False
+          in_comment = False
+          hooked = False
+          header_lines = []
+
+          # Kata kunci awal tipe data C di kernel 3.10 (untuk melewati deklarasi variabel lokal)
+          var_starts = (
+              "struct ", "const ", "int ", "int\t", "unsigned ", "long ", "char ",
+              "bool ", "size_t ", "ssize_t ", "void ", "u32 ", "u64 ", "mm_segment_t "
+          )
+
+          for i, line in enumerate(lines):
+              s = line.strip()
+              if not in_compat:
+                  if ("compat_do_execve_common(" in s or "compat_do_execve(" in s) and not s.endswith(";"):
+                      in_compat = True
+                      header_lines = [s]
+                      if "{" in s:
+                          brace_opened = True
+                  continue
+
+              if not brace_opened:
+                  header_lines.append(s)
+                  if "{" in s:
+                      brace_opened = True
+                  continue
+
+              # Lewati baris kosong dan komentar multi-baris /* ... */
+              if not s:
+                  continue
+              if in_comment:
+                  if "*/" in s:
+                      in_comment = False
+                  continue
+              if s.startswith("/*"):
+                  if "*/" not in s:
+                      in_comment = True
+                  continue
+              if s.startswith("//") or s.startswith("#"):
+                  continue
+
+              # Lewati semua deklarasi variabel lokal di bagian atas fungsi
+              if s.startswith(var_starts):
+                  continue
+
+              # Baris pertama kode eksekusi ditemukan! Sisipkan hook tepat di sini
+              header_str = " ".join(header_lines)
+              if "struct filename" in header_str:
+                  hook = (
+                      "#ifdef CONFIG_KSU\n"
+                      "\tif (!IS_ERR(filename))\n"
+                      "\t\tksu_handle_execve_sucompat((int *)AT_FDCWD, (const char **)&filename->name, NULL, NULL, NULL);\n"
+                      "#endif\n"
+                  )
+              else:
+                  hook = (
+                      "#ifdef CONFIG_KSU\n"
+                      "\tksu_handle_execve_sucompat((int *)AT_FDCWD, &filename, NULL, NULL, NULL);\n"
+                      "#endif\n"
+                  )
+              lines.insert(i, hook)
+              hooked = True
+              break
+
+          if not hooked:
+              print("=== DEBUG: Daftar fungsi execve di fs/exec.c ===")
+              for idx, l in enumerate(lines):
+                  if "execve" in l and "(" in l:
+                      print(f"Baris {idx+1}: {l.strip()}")
+              raise SystemExit("GAGAL menemukan fungsi compat_do_execve di fs/exec.c!")
+
+          with open("fs/exec.c", "w") as f:
+              f.writelines(lines)
+          print("BERHASIL hook compat_do_execve di baris:", i + 1)
+          EOF
+          grep -n -C 8 "ksu_handle_execve_sucompat" fs/exec.c
           # 2.1 Matikan paksa Safe Mode agar saklar tidak terkunci
           sed -i 's/ksu_safe_mode = true;/ksu_safe_mode = false;/g' drivers/kernelsu/core_hook.c
 
