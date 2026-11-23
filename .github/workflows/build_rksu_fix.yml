@@ -299,14 +299,42 @@ jobs:
           EOF
           sed -i 's/static bool ksu_su_compat_enabled = true;/static bool ksu_su_compat_enabled = true;\n#define ksu_su_compat_enabled true/g' KernelSU/kernel/sucompat.c
 
-
-          # 1e. Aktifkan guard #ifdef CONFIG_KSU di semua file hook
+          # 1e. Aktifkan guard #ifdef CONFIG_KSU & salin hook execve ke compat_do_execve_common (32-bit)
           for hookfile in fs/exec.c fs/open.c fs/read_write.c fs/stat.c drivers/input/input.c kernel/sys.c; do
             if [ -f "$hookfile" ]; then
               sed -i 's/#ifdef CONFIG_KSU_MANUAL_HOOK/#ifdef CONFIG_KSU/g' "$hookfile"
             fi
           done
 
+          python3 << 'EOF'
+          import re
+
+          with open("fs/exec.c", "r") as f:
+              exec_c = f.read()
+
+          # Ambil persis blok hook #ifdef CONFIG_KSU yang sudah terbukti jalan di do_execve_common
+          m_src = re.search(
+              r'do_execve_common\s*\([^\)]*\)\s*\{.*?(?P<hook>#ifdef CONFIG_KSU.*?#endif)',
+              exec_c,
+              re.DOTALL
+          )
+          assert m_src, "Blok hook #ifdef CONFIG_KSU di do_execve_common tidak ditemukan!"
+          hook_block = m_src.group("hook")
+
+          # Cari baris pertama setelah deklarasi variabel di compat_do_execve_common (bprm = kzalloc / retval = unshare_files)
+          m_compat = re.search(r'(compat_do_execve_common\s*\([^\)]*\)\s*\{)', exec_c)
+          if m_compat:
+              start = m_compat.end()
+              m_ins = re.search(r'\n(\s*(?:retval\s*=|bprm\s*=|if\s*\(|path\s*=))', exec_c[start:start+1200])
+              assert m_ins, "Titik sisip di compat_do_execve_common tidak ditemukan!"
+              pos = start + m_ins.start()
+              if hook_block not in exec_c[start:pos+500]:
+                  exec_c = exec_c[:pos] + "\n" + hook_block + exec_c[pos:]
+                  print("BERHASIL menyalin hook execve ke compat_do_execve_common!")
+
+          with open("fs/exec.c", "w") as f:
+              f.write(exec_c)
+          EOF
 
           # 2.1 Matikan paksa Safe Mode agar saklar tidak terkunci
           sed -i 's/ksu_safe_mode = true;/ksu_safe_mode = false;/g' drivers/kernelsu/core_hook.c
