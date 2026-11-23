@@ -302,7 +302,32 @@ jobs:
               sed -i 's/#ifdef CONFIG_KSU_MANUAL_HOOK/#ifdef CONFIG_KSU/g' "$hookfile"
             fi
           done
-          
+
+          - name: Hook compat_do_execve_common in fs/exec.c
+          run: |
+          python3 << 'EOF'
+          import re
+
+          with open("fs/exec.c", "r") as f:
+              content = f.read()
+
+          decl = "#ifdef CONFIG_KSU\nextern int ksu_handle_execve_sucompat(int *fd, const char **filename_ptr, void *argv, void *envp, int *flags);\n#endif\n"
+          if "ksu_handle_execve_sucompat" not in content:
+              content = content.replace("#include <linux/fs.h>", "#include <linux/fs.h>\n" + decl, 1)
+
+          for fn in ["do_execve_common", "compat_do_execve_common"]:
+              m = re.search(rf'\b{fn}\s*\([^\)]*const char \*filename[^\)]*\)\s*\{{', content)
+              if m and f"/* ksu_hook_{fn} */" not in content:
+                  start = m.end()
+                  m_blank = re.search(r'\n\s*\n', content[start:start+800])
+                  if m_blank:
+                      pos = start + m_blank.start()
+                      hook = f"\n#ifdef CONFIG_KSU /* ksu_hook_{fn} */\n\tksu_handle_execve_sucompat((int *)AT_FDCWD, &filename, NULL, NULL, NULL);\n#endif"
+                      content = content[:pos] + hook + content[pos:]
+
+          with open("fs/exec.c", "w") as f:
+              f.write(content)
+          EOF
           
           # 2.1 Matikan paksa Safe Mode agar saklar tidak terkunci
           sed -i 's/ksu_safe_mode = true;/ksu_safe_mode = false;/g' drivers/kernelsu/core_hook.c
