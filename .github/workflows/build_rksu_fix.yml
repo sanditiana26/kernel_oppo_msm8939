@@ -121,70 +121,10 @@ jobs:
               f.write(content)
           EOF
 
-
-          - name: Hook compat_do_execve in fs/exec.c
+          - name: Print fs/exec.c lines 1505-1680
           run: |
-          python3 << 'EOF'
-          with open("fs/exec.c", "r") as f:
-              content = f.read()
-
-          decl = (
-              "#ifdef CONFIG_KSU\n"
-              "extern int ksu_handle_execve_sucompat(int *fd, const char **filename_ptr, void *argv, void *envp, int *flags);\n"
-              "#endif\n"
-          )
-          if "ksu_handle_execve_sucompat" not in content:
-              content = content.replace("#include <linux/fs.h>", "#include <linux/fs.h>\n" + decl, 1)
-
-          lines = content.splitlines(True)
-          in_compat = False
-          brace_depth = 0
-          hooked = False
-          header_lines = []
-
-          for i, line in enumerate(lines):
-              s = line.strip()
-              if not in_compat:
-                  if ("compat_do_execve_common(" in s or "compat_do_execve(" in s) and not s.endswith(";"):
-                      in_compat = True
-                      header_lines = [s]
-                      brace_depth += line.count("{") - line.count("}")
-                  continue
-
-              if brace_depth == 0:
-                  header_lines.append(s)
-              brace_depth += line.count("{") - line.count("}")
-
-              # Sisipkan tepat sebelum baris 'return ' di level utama fungsi (brace_depth == 1)
-              if brace_depth == 1 and s.startswith("return "):
-                  header_str = " ".join(header_lines)
-                  if "struct filename" in header_str:
-                      hook = (
-                          "#ifdef CONFIG_KSU\n"
-                          "\tif (!IS_ERR(filename))\n"
-                          "\t\tksu_handle_execve_sucompat((int *)AT_FDCWD, (const char **)&filename->name, NULL, NULL, NULL);\n"
-                          "#endif\n"
-                      )
-                  else:
-                      hook = (
-                          "#ifdef CONFIG_KSU\n"
-                          "\tksu_handle_execve_sucompat((int *)AT_FDCWD, &filename, NULL, NULL, NULL);\n"
-                          "#endif\n"
-                      )
-                  lines.insert(i, hook)
-                  hooked = True
-                  break
-
-              if brace_depth <= 0 and len(header_lines) > 0 and "{" in "".join(header_lines):
-                  break
-
-          assert hooked, "GAGAL menyisipkan hook di compat_do_execve!"
-          with open("fs/exec.c", "w") as f:
-              f.writelines(lines)
-          print("BERHASIL hook compat_do_execve sebelum return di baris:", i + 1)
-          EOF
-          grep -n -C 8 "ksu_handle_execve_sucompat" fs/exec.c
-
+          sed -n '1505,1680p' fs/exec.c
+          
           # 1d. Patch core_hook.c untuk 32-bit compat App Profile (Umount + SuperUser) & Manager UID
           python3 << 'EOF'
           import re
