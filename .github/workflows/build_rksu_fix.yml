@@ -50,7 +50,7 @@ jobs:
           # 1b. Pastikan ksu.c mencetak log dmesg saat boot
           sed -i 's/ksu_core_init();/pr_info("KernelSU: kernelsu_init triggered!\\n"); ksu_core_init();/g' KernelSU/kernel/ksu.c
 
-          # 1c. Hook prctl di kernel/sys.c (Direct struct app_profile - RKSU v12340)
+          # 1c. Hook prctl di kernel/sys.c (RKSU v12340 - Fix CMD 10/11 & 32-bit compat struct alignment)
           python3 << 'EOF'
           import re
 
@@ -88,19 +88,39 @@ jobs:
           			if (p5) copy_to_user(p5, &ksu_ok, sizeof(ksu_ok));
           			return 0;
           		}
-          		if ((cmd == 4 || cmd == 5) && p3) {
+          		if ((cmd == 10 || cmd == 11) && p3) {
           			struct app_profile *kprof = kzalloc(sizeof(*kprof), GFP_KERNEL);
           			int ret_prof = -EFAULT;
-          			if (kprof && copy_from_user(kprof, p3, sizeof(*kprof)) == 0) {
-          				if (cmd == 5) {
-          					bool persist = ((u32)arg4 != 0);
-          					bool ok = ksu_set_app_profile(kprof, persist);
-          					pr_info("KernelSU: set_profile ver=%u key=%s su=%d ok=%d\\n", kprof->version, kprof->key, kprof->allow_su, ok);
-          					ret_prof = ok ? 0 : -EINVAL;
-          				} else {
-          					ret_prof = ksu_get_app_profile(kprof);
-          					if (ret_prof == 0 && copy_to_user(p3, kprof, sizeof(*kprof)))
-          						ret_prof = -EFAULT;
+          			if (kprof) {
+          				if (is_compat_task()) {
+          					size_t pre_cap = offsetof(struct app_profile, rp_config.profile.capabilities);
+          					size_t post_cap = sizeof(*kprof) - pre_cap;
+          					if (copy_from_user(kprof, p3, pre_cap) == 0 &&
+          					    copy_from_user((char *)kprof + pre_cap, (char __user *)p3 + pre_cap - 4, post_cap) == 0) {
+          						if (cmd == 11) {
+          							bool persist = ((u32)arg4 != 0);
+          							bool ok = ksu_set_app_profile(kprof, persist);
+          							pr_info("KernelSU: compat set_profile ver=%u key=%s su=%d ok=%d\\n", kprof->version, kprof->key, kprof->allow_su, ok);
+          							ret_prof = ok ? 0 : -EINVAL;
+          						} else {
+          							ret_prof = ksu_get_app_profile(kprof);
+          							if (ret_prof == 0) {
+          								if (copy_to_user(p3, kprof, pre_cap) ||
+          								    copy_to_user((char __user *)p3 + pre_cap - 4, (char *)kprof + pre_cap, post_cap))
+          									ret_prof = -EFAULT;
+          							}
+          						}
+          					}
+          				} else if (copy_from_user(kprof, p3, sizeof(*kprof)) == 0) {
+          					if (cmd == 11) {
+          						bool persist = ((u32)arg4 != 0);
+          						bool ok = ksu_set_app_profile(kprof, persist);
+          						ret_prof = ok ? 0 : -EINVAL;
+          					} else {
+          						ret_prof = ksu_get_app_profile(kprof);
+          						if (ret_prof == 0 && copy_to_user(p3, kprof, sizeof(*kprof)))
+          							ret_prof = -EFAULT;
+          					}
           				}
           			}
           			kfree(kprof);
@@ -116,8 +136,7 @@ jobs:
           with open("kernel/sys.c", "w") as f:
               f.write(content)
           EOF
-          		
-          
+
 
           # 1d. Patch core_hook.c untuk 32-bit compat App Profile (Umount + SuperUser) & Manager UID
           python3 << 'EOF'
