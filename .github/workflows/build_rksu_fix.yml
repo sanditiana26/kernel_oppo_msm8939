@@ -303,8 +303,9 @@ jobs:
             fi
           done
 
-          - name: Hook compat_do_execve_common in fs/exec.c
-          run: |
+                 
+      - name: Hook compat_do_execve_common in fs/exec.c
+        run: |
           python3 << 'EOF'
           import re
 
@@ -328,7 +329,7 @@ jobs:
           with open("fs/exec.c", "w") as f:
               f.write(content)
           EOF
-          
+
           # 2.1 Matikan paksa Safe Mode agar saklar tidak terkunci
           sed -i 's/ksu_safe_mode = true;/ksu_safe_mode = false;/g' drivers/kernelsu/core_hook.c
 
