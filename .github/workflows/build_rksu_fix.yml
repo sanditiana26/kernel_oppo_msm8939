@@ -423,6 +423,10 @@ jobs:
       - name: Print RKSU app_profile struct
         run: |
           grep -rn -A 45 "struct app_profile" drivers/kernelsu/
+      - name: Print RKSU prctl & ksu.h
+        run: |
+          head -n 65 drivers/kernelsu/ksu.h
+          grep -rn -C 15 "ksu_set_app_profile" drivers/kernelsu/
 
       - name: Clone Toolchains (GCC 4.9)
         run: |
