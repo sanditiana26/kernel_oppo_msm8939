@@ -50,7 +50,73 @@ jobs:
           # 1b. Pastikan ksu.c mencetak log dmesg saat boot
           sed -i 's/ksu_core_init();/pr_info("KernelSU: kernelsu_init triggered!\\n"); ksu_core_init();/g' KernelSU/kernel/ksu.c
 
-          
+          # 1c. Hook prctl di kernel/sys.c (RKSU v12340 - Mount & SU aktif penuh)
+          python3 << 'EOF'
+          import re
+
+          with open("kernel/sys.c", "r") as f:
+              content = f.read()
+
+          inc_hdr = '#include <linux/compat.h>\n#include "../drivers/kernelsu/ksu.h"\n'
+          prctl_decl = "SYSCALL_DEFINE5(prctl,"
+          content = content.replace(prctl_decl, inc_hdr + prctl_decl, 1)
+
+          hook_code = """if ((u32)option == 0xdeadbeef) {
+          		extern int ksu_handle_prctl(int option, unsigned long arg2, unsigned long arg3, unsigned long arg4, unsigned long arg5);
+          		extern bool ksu_set_app_profile(struct app_profile *profile, bool persist);
+          		extern int ksu_get_app_profile(struct app_profile *profile);
+          		extern void escape_to_root(void);
+          		u32 ksu_ver = 12340, ksu_ok = 0xdeadbeef, cmd = (u32)arg2;
+          		void __user *p3 = is_compat_task() ? compat_ptr((u32)arg3) : (void __user *)arg3;
+          		void __user *p4 = is_compat_task() ? compat_ptr((u32)arg4) : (void __user *)arg4;
+          		void __user *p5 = is_compat_task() ? compat_ptr((u32)arg5) : (void __user *)arg5;
+          		if (cmd == 1 || cmd == 2) {
+          			if (p3) copy_to_user(p3, &ksu_ver, sizeof(ksu_ver));
+          			if (p5) copy_to_user(p5, &ksu_ok, sizeof(ksu_ok));
+          			return 0;
+          		}
+          		if (cmd == 0) {
+          			ksu_handle_prctl((int)(u32)option, 0, (unsigned long)p3, (unsigned long)p4, (unsigned long)p5);
+          			escape_to_root();
+          			if (p5) copy_to_user(p5, &ksu_ok, sizeof(ksu_ok));
+          			return 0;
+          		}
+          		if (cmd == 9) return 0;
+          		if (cmd == 14 || cmd == 15) {
+          			u8 su_en = 1;
+          			if (p3) copy_to_user(p3, &su_en, sizeof(su_en));
+          			if (p5) copy_to_user(p5, &ksu_ok, sizeof(ksu_ok));
+          			return 0;
+          		}
+          		if ((cmd == 10 || cmd == 11) && p3) {
+          			struct app_profile *kprof = kzalloc(sizeof(*kprof), GFP_KERNEL);
+          			int ret_prof = -EFAULT;
+          			if (kprof && copy_from_user(kprof, p3, sizeof(*kprof)) == 0) {
+          				if (cmd == 11) {
+          					bool persist = ((u32)arg4 != 0);
+          					bool ok = ksu_set_app_profile(kprof, persist);
+          					pr_info("KernelSU: set_profile ver=%u key=%s su=%d ok=%d\\n", kprof->version, kprof->key, kprof->allow_su, ok);
+          					ret_prof = ok ? 0 : -EINVAL;
+          				} else {
+          					ret_prof = ksu_get_app_profile(kprof);
+          					if (ret_prof == 0 && copy_to_user(p3, kprof, sizeof(*kprof)))
+          						ret_prof = -EFAULT;
+          				}
+          			}
+          			kfree(kprof);
+          			if (ret_prof == 0 && p5) copy_to_user(p5, &ksu_ok, sizeof(ksu_ok));
+          			return ret_prof;
+          		}
+          		return ksu_handle_prctl((int)(u32)option, (unsigned long)cmd, (unsigned long)p3, (unsigned long)p4, (unsigned long)p5);
+          	}"""
+
+          m_prctl = re.search(r'SYSCALL_DEFINE5\(prctl,[^\)]+\)\s*\{', content)
+          content = content[:m_prctl.end()] + "\n\t" + hook_code + "\n" + content[m_prctl.end():]
+
+          with open("kernel/sys.c", "w") as f:
+              f.write(content)
+          EOF
+
 
           # 1d. Patch core_hook.c untuk 32-bit compat App Profile (Umount + SuperUser) & Manager UID
           python3 << 'EOF'
