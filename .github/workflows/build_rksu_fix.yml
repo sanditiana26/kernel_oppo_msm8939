@@ -471,7 +471,7 @@ jobs:
           EOF
           
           # 2.1 Matikan paksa Safe Mode agar saklar tidak terkunci
-          sed -i 's/ksu_safe_mode = true;/ksu_safe_mode = false;/g' drivers/kernelsu/core_hook.c
+          sed -i 's/ksu_safe_mode = true;/ksu_safe_mode = false;/g' kernelsu/kernel/core_hook.c
 
 
           # 2. Fix error 'request for member val' pada Kernel 3.10
