@@ -20,13 +20,15 @@ jobs:
           GH="https://github.com"
           git clone "${GH}/rsuntk/KernelSU.git" KernelSU
           cd KernelSU
-          LEGACY_REF=$(git tag -l "*1.0.5*83*legacy*" | head -n 1)
-          if [ -n "$LEGACY_REF" ]; then
-          git checkout "$LEGACY_REF"
-          else
-          git checkout legacy || git checkout $(git branch -r | grep -i legacy | head -n 1 | sed 's|origin/||')
+          git fetch --all --tags
+          LEGACY_COMMIT=$(git log --all --grep="1.0.5" -n 1 --format="%H")
+          if [ -z "$LEGACY_COMMIT" ]; then
+          LEGACY_COMMIT=$(git rev-list -n 1 --all -- kernel/core_hook.c)
           fi
-          echo "Checked out RKSU ref: $(git describe --tags --always)"
+          assert_msg="Tidak ada commit legacy dengan core_hook.c"
+          [ -n "$LEGACY_COMMIT" ] || { echo "$assert_msg"; exit 1; }
+          git checkout "$LEGACY_COMMIT"
+          echo "Checked out RKSU Legacy commit: $(git log -1 --oneline)"
           cd ..
           ln -sf ../KernelSU/kernel drivers/kernelsu
           grep -q "kernelsu/Kconfig" drivers/Kconfig || sed -i '$i source "drivers/kernelsu/Kconfig"' drivers/Kconfig
