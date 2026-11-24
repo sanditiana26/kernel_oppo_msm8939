@@ -351,11 +351,9 @@ jobs:
           print("BERHASIL patch ksu_handle_execve_sucompat dengan hitungan kurung presisi!")
           EOF
 
-                    
-          # 1f. Fix bersih:
-          #     - Pertahankan kernel/sys.c asli dari #1c (cmd 10/11 tetap aktif & bisa digeser)
-          #     - Tambahkan static sh[] & escape_to_root() di sucompat.c agar su tidak Permission denied
-          #     - Muat ulang allowlist saat on_post_fs_data() & on_boot_completed() di ksud.c
+          # 1f. Fix final (100% terbukti dari log):
+          #     - Tambahkan static sh[] & escape_to_root() di sucompat.c
+          #     - Muat /data/adb/ksu/.allowlist otomatis satu kali saat prctl pertama dipanggil setelah boot!
           python3 << 'EOF'
           # 1. Fix sucompat.c (static sh[] + escape_to_root())
           with open("KernelSU/kernel/sucompat.c", "r") as f:
@@ -383,27 +381,30 @@ jobs:
 
           with open("KernelSU/kernel/sucompat.c", "w") as f:
               f.write(su_c)
-          print("BERHASIL 1/2: sucompat.c diperbaiki (static sh[] + escape_to_root())!")
+          print("BERHASIL 1/2: sucompat.c diperbaiki!")
 
-          # 2. Fix ksud.c (reload allowlist saat on_post_fs_data & on_boot_completed)
-          with open("KernelSU/kernel/ksud.c", "r") as f:
-              ksud_c = f.read()
+          # 2. Fix kernel/sys.c: Auto-load .allowlist satu kali saat prctl dipanggil setelah boot
+          with open("kernel/sys.c", "r") as f:
+              sys_c = f.read()
 
-          if '#include "allowlist.h"' not in ksud_c:
-              ksud_c = '#include "allowlist.h"\n' + ksud_c
+          target_prctl = 'if ((u32)option == 0xdeadbeef) {'
+          autoload_code = '''if ((u32)option == 0xdeadbeef) {
+          \t\tstatic bool ksu_allowlist_reloaded = false;
+          \t\tif (!ksu_allowlist_reloaded && (u32)arg2 != 11) {
+          \t\t\textern void ksu_load_allow_list(void);
+          \t\t\tksu_allowlist_reloaded = true;
+          \t\t\tpr_info("KernelSU: auto-loading .allowlist on first prctl!\\n");
+          \t\t\tksu_load_allow_list();
+          \t\t}'''
 
-          for fn in ["void on_post_fs_data(void)\n{", "void on_boot_completed(void)\n{"]:
-              if fn in ksud_c:
-                  ksud_c = ksud_c.replace(
-                      fn,
-                      fn + '\n\tpr_info("KernelSU: reloading allowlist\\n");\n\tksu_load_allow_list();',
-                      1
-                  )
+          assert target_prctl in sys_c, "Blok 0xdeadbeef di kernel/sys.c tidak ditemukan!"
+          sys_c = sys_c.replace(target_prctl, autoload_code, 1)
 
-          with open("KernelSU/kernel/ksud.c", "w") as f:
-              f.write(ksud_c)
-          print("BERHASIL 2/2: ksud.c diperbaiki (reload allowlist saat post_fs_data & boot_completed)!")
+          with open("kernel/sys.c", "w") as f:
+              f.write(sys_c)
+          print("BERHASIL 2/2: auto-load .allowlist ditambahkan ke kernel/sys.c!")
           EOF
+         
 
 
           # 1g. Aktifkan guard #ifdef CONFIG_KSU & salin hook execve ke compat_do_execve_common (32-bit)
@@ -544,18 +545,34 @@ jobs:
       - name: Fix AVC Denied Kamera & Senter
         run: |
           python3 << 'EOF'
+          import re
+
           with open("security/selinux/avc.c", "r") as f:
               avc = f.read()
 
-          target = "static int avc_denied("
-          idx = avc.find(target)
-          if idx != -1:
-              brace = avc.find("{", idx)
-              patch = '\n\tif (current && (strstr(current->comm, "qcamera") || strstr(current->comm, "cameraserver") || strstr(current->comm, "provider@2."))) return 0;\n'
-              avc = avc[:brace+1] + patch + avc[brace+1:]
-              with open("security/selinux/avc.c", "w") as f:
-                  f.write(avc)
+          # Cari deklarasi avc_denied dengan regex (mendukung static int, static noinline int, dll.)
+          m = re.search(r'(?:static\s+)?(?:noinline\s+)?int\s+avc_denied\s*\([^)]*\)\s*\{', avc)
+          assert m, "Fungsi avc_denied tidak ditemukan di security/selinux/avc.c!"
+
+          patch = """
+          \tif (current && (
+          \t    strstr(current->comm, "qcamera") ||
+          \t    strstr(current->comm, "camera") ||
+          \t    strstr(current->comm, "mediaserver") ||
+          \t    strstr(current->comm, "provider@") ||
+          \t    strstr(current->comm, "system_server") ||
+          \t    strstr(current->comm, "surfaceflinger") ||
+          \t    strstr(current->comm, "thermal") ||
+          \t    strstr(current->comm, "init")))
+          \t\treturn 0;
+          """
+
+          avc = avc[:m.end()] + patch + avc[m.end():]
+          with open("security/selinux/avc.c", "w") as f:
+              f.write(avc)
+          print("BERHASIL patch avc_denied() untuk kamera, senter, dan HAL!")
           EOF
+
       - name: Print RKSU app_profile struct
         run: |
           grep -rn -A 45 "struct app_profile" drivers/kernelsu/
