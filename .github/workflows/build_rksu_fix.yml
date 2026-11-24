@@ -18,25 +18,16 @@ jobs:
       - name: Setup RKSU & Custom Kernel Version
         run: |
           GH="https://github.com"
-          git init KernelSU
+          git clone "${GH}/rsuntk/KernelSU.git" KernelSU
           cd KernelSU
-          git remote add origin "${GH}/rsuntk/KernelSU.git"
-          git ls-remote --heads --tags origin
-          LEGACY_REF=$(git ls-remote --heads --tags origin | grep -iE "legacy|1\.0\.5" | head -n 1 | awk '{print $2}')
-          if [ -n "$LEGACY_REF" ]; then
-          git fetch --depth=1 origin "$LEGACY_REF"
-          git checkout FETCH_HEAD
-          else
-          echo "Mencari di seluruh refs..."
-          git fetch origin "+refs/*:refs/remotes/origin/*"
-          LEGACY_COMMIT=$(git log --all --diff-filter=D --format="%H" -- kernel/core_hook.c | head -n 1)
-          git checkout "${LEGACY_COMMIT}~1"
+          LEGACY_COMMIT=$(git log -S "compat_app_profile" -n 1 --format="%H" -- kernel/core_hook.c)
+          if [ -z "$LEGACY_COMMIT" ]; then
+          LEGACY_COMMIT=$(git log -S "ksu_set_app_profile" -n 1 --format="%H" -- kernel/core_hook.c)
           fi
-          [ -f "kernel/core_hook.c" ] || { echo "FATAL: kernel/core_hook.c tidak ditemukan!"; exit 1; }
+          [ -n "$LEGACY_COMMIT" ] || { echo "FATAL: Commit legacy core_hook.c tidak ditemukan!"; exit 1; }
+          git checkout "$LEGACY_COMMIT"
           echo "Checked out RKSU Legacy commit: $(git log -1 --oneline)"
           cd ..
-
-
           ln -sf ../KernelSU/kernel drivers/kernelsu
           grep -q "kernelsu/Kconfig" drivers/Kconfig || sed -i '$i source "drivers/kernelsu/Kconfig"' drivers/Kconfig
           grep -q "kernelsu" drivers/Makefile || echo 'obj-$(CONFIG_KSU) += kernelsu/' >> drivers/Makefile
