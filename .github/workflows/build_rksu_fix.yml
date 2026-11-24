@@ -20,9 +20,21 @@ jobs:
           GH="https://github.com"
           git clone "${GH}/rsuntk/KernelSU.git" KernelSU
           cd KernelSU
-          git checkout 5f975e86~1
-          echo "Checked out RKSU Legacy commit: $(git log -1 --oneline)"
+          # Cari commit sebelum 5f975e86 yang paling dekat dengan versi 12340 (sekitar ~1 hingga ~30 commit sebelum 5f975e86)
+          TARGET_COMMIT=$(git log 5f975e86~1 -n 30 --format="%H" | while read c; do
+          if git show "$c:kernel/Makefile" 2>/dev/null | grep -q "12340"; then
+          echo "$c"
+          break
+          fi
+          done)
+          git checkout "${TARGET_COMMIT:-5f975e86~1}"
+          echo "Checked out RKSU commit: $(git log -1 --oneline)"
           cd ..
+
+          # Fix kompilasi Kernel 3.10: sediakan header dummy linux/compiler_types.h & MODULE_IMPORT_NS
+          touch include/linux/compiler_types.h
+          sed -i '/MODULE_IMPORT_NS/d' KernelSU/kernel/*.c
+
           ln -sf ../KernelSU/kernel drivers/kernelsu
           grep -q "kernelsu/Kconfig" drivers/Kconfig || sed -i '$i source "drivers/kernelsu/Kconfig"' drivers/Kconfig
           grep -q "kernelsu" drivers/Makefile || echo 'obj-$(CONFIG_KSU) += kernelsu/' >> drivers/Makefile
