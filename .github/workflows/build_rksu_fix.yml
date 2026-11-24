@@ -20,16 +20,11 @@ jobs:
           GH="https://github.com"
           git clone "${GH}/rsuntk/KernelSU.git" KernelSU
           cd KernelSU
-          git fetch --all --tags
-          DEL_COMMIT=$(git rev-list -n 1 --diff-filter=D --all -- kernel/core_hook.c)
-          if [ -n "$DEL_COMMIT" ]; then
-          git checkout "${DEL_COMMIT}~1"
-          else
-          git checkout $(git rev-list -n 1 --all -- kernel/core_hook.c)~1
-          fi
-          [ -f "kernel/core_hook.c" ] || { echo "FATAL: kernel/core_hook.c tetap tidak ditemukan!"; exit 1; }
+          git checkout 2c1b26df~1
+          [ -f "kernel/core_hook.c" ] || { echo "FATAL: kernel/core_hook.c tidak ditemukan!"; exit 1; }
           echo "Checked out RKSU Legacy commit: $(git log -1 --oneline)"
           cd ..
+
 
           ln -sf ../KernelSU/kernel drivers/kernelsu
           grep -q "kernelsu/Kconfig" drivers/Kconfig || sed -i '$i source "drivers/kernelsu/Kconfig"' drivers/Kconfig
