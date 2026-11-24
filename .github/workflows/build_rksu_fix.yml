@@ -331,18 +331,24 @@ jobs:
           	return 0;
           }}"""
 
-          sc, n_rep = re.subn(
-              r"int\s+ksu_handle_execve_sucompat\s*\([^)]*\)\s*\{.*?\n\}",
-              new_sucompat_execve,
-              sc,
-              count=1,
-              flags=re.DOTALL
-          )
-          assert n_rep == 1, "Gagal mem-patch ksu_handle_execve_sucompat di sucompat.c!"
+          m = re.search(r"int\s+ksu_handle_execve_sucompat\s*\([^)]*\)\s*\{", sc)
+          assert m, "Fungsi ksu_handle_execve_sucompat tidak ditemukan!"
+
+          brace_count = 1
+          idx = m.end()
+          while idx < len(sc) and brace_count > 0:
+              if sc[idx] == "{":
+                  brace_count += 1
+              elif sc[idx] == "}":
+                  brace_count -= 1
+              idx += 1
+
+          assert brace_count == 0, "Kurung kurawal fungsi ksu_handle_execve_sucompat tidak seimbang!"
+          sc = sc[:m.start()] + new_sucompat_execve + sc[idx:]
 
           with open("KernelSU/kernel/sucompat.c", "w") as f:
               f.write(sc)
-          print("BERHASIL patch ksu_handle_execve_sucompat di sucompat.c!")
+          print("BERHASIL patch ksu_handle_execve_sucompat dengan hitungan kurung presisi!")
           EOF
 
           # 1f. Muat ulang allowlist saat boot-completed agar toggle SU & Mount tidak reset saat reboot
