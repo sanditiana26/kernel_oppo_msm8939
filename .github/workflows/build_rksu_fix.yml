@@ -297,11 +297,73 @@ jobs:
           with open("KernelSU/kernel/core_hook.c", "w") as f:
               f.write(code)
           EOF
-          sed -i 's/static bool ksu_su_compat_enabled = true;/static bool ksu_su_compat_enabled = true;\n#define ksu_su_compat_enabled true/g' KernelSU/kernel/sucompat.c
-          sed -i 's/if (!ksu_sucompat_non_kp)/if (0)/g' KernelSU/kernel/sucompat.c
-          sed -i 's/if (!ksu_execveat_hook)/if (0)/g' KernelSU/kernel/sucompat.c
 
-          # 1e. Aktifkan guard #ifdef CONFIG_KSU & salin hook execve ke compat_do_execve_common (32-bit)
+          # 1e. Patch sucompat.c untuk kernel 3.10 (baca pointer kernel langsung agar Termux bisa su)
+          python3 << 'EOF'
+          import re
+
+          with open("KernelSU/kernel/sucompat.c", "r") as f:
+              sc = f.read()
+
+          sc = sc.replace("static bool ksu_su_compat_enabled = true;", "static bool ksu_su_compat_enabled = true;\n#define ksu_su_compat_enabled true")
+          sc = re.sub(r"if\s*\(\s*!ksu_sucompat_non_kp\s*\)", "if (0)", sc)
+          sc = re.sub(r"if\s*\(\s*!ksu_execveat_hook\s*\)", "if (0)", sc)
+
+          uid_check = "ksu_is_allow_uid_for_current(current_uid().val)" if "ksu_is_allow_uid_for_current" in sc else "ksu_is_allow_uid(current_uid().val)"
+
+          new_sucompat_execve = f"""int ksu_handle_execve_sucompat(int *fd, const char **filename_ptr,
+          			       void *argv, void *envp, int *flags)
+          {{
+          	const char su[] = "/system/bin/su";
+          	const char sh[] = "/system/bin/sh";
+
+          	if (!filename_ptr || !*filename_ptr)
+          		return 0;
+
+          	if (!{uid_check})
+          		return 0;
+
+          	if (unlikely(!memcmp(*filename_ptr, su, sizeof(su)))) {{
+          		pr_info("KernelSU: sucompat execve su->sh! uid=%d\\n", current_uid().val);
+          		*filename_ptr = sh;
+          	}}
+
+          	return 0;
+          }}"""
+
+          sc, n_rep = re.subn(
+              r"int\s+ksu_handle_execve_sucompat\s*\([^)]*\)\s*\{.*?\n\}",
+              new_sucompat_execve,
+              sc,
+              count=1,
+              flags=re.DOTALL
+          )
+          assert n_rep == 1, "Gagal mem-patch ksu_handle_execve_sucompat di sucompat.c!"
+
+          with open("KernelSU/kernel/sucompat.c", "w") as f:
+              f.write(sc)
+          print("BERHASIL patch ksu_handle_execve_sucompat di sucompat.c!")
+          EOF
+
+          # 1f. Muat ulang allowlist saat boot-completed agar toggle SU & Mount tidak reset saat reboot
+          python3 << 'EOF'
+          with open("KernelSU/kernel/ksud.c", "r") as f:
+              ksud_c = f.read()
+
+          if "extern void ksu_load_allow_list(void);" not in ksud_c:
+              ksud_c = "extern void ksu_load_allow_list(void);\n" + ksud_c
+
+          ksud_c = ksud_c.replace(
+              "void on_boot_completed(void)\n{",
+              "void on_boot_completed(void)\n{\n\tpr_info(\"KernelSU: reloading allowlist on boot_completed\\n\");\n\tksu_load_allow_list();"
+          )
+
+          with open("KernelSU/kernel/ksud.c", "w") as f:
+              f.write(ksud_c)
+          print("BERHASIL menambahkan reload allowlist pada on_boot_completed!")
+          EOF
+
+          # 1g. Aktifkan guard #ifdef CONFIG_KSU & salin hook execve ke compat_do_execve_common (32-bit)
           for hookfile in fs/exec.c fs/open.c fs/read_write.c fs/stat.c drivers/input/input.c kernel/sys.c; do
             if [ -f "$hookfile" ]; then
               sed -i 's/#ifdef CONFIG_KSU_MANUAL_HOOK/#ifdef CONFIG_KSU/g' "$hookfile"
@@ -314,7 +376,6 @@ jobs:
           with open("fs/exec.c", "r") as f:
               exec_c = f.read()
 
-          # Ambil persis blok hook #ifdef CONFIG_KSU yang sudah terbukti jalan di do_execve_common
           m_src = re.search(
               r'do_execve_common\s*\([^\)]*\)\s*\{.*?(?P<hook>#ifdef CONFIG_KSU.*?#endif)',
               exec_c,
@@ -323,7 +384,6 @@ jobs:
           assert m_src, "Blok hook #ifdef CONFIG_KSU di do_execve_common tidak ditemukan!"
           hook_block = m_src.group("hook")
 
-          # Cari baris pertama setelah deklarasi variabel di compat_do_execve_common (bprm = kzalloc / retval = unshare_files)
           m_compat = re.search(r'(compat_do_execve_common\s*\([^\)]*\)\s*\{)', exec_c)
           if m_compat:
               start = m_compat.end()
@@ -337,7 +397,7 @@ jobs:
           with open("fs/exec.c", "w") as f:
               f.write(exec_c)
           EOF
-
+          
           # 2.1 Matikan paksa Safe Mode agar saklar tidak terkunci
           sed -i 's/ksu_safe_mode = true;/ksu_safe_mode = false;/g' drivers/kernelsu/core_hook.c
 
