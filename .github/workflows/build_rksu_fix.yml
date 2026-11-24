@@ -356,8 +356,8 @@ jobs:
           with open("KernelSU/kernel/ksud.c", "r") as f:
               ksud_c = f.read()
 
-          if "extern void ksu_load_allow_list(void);" not in ksud_c:
-              ksud_c = "extern void ksu_load_allow_list(void);\n" + ksud_c
+          if '#include "allowlist.h"' not in ksud_c:
+              ksud_c = '#include "allowlist.h"\n' + ksud_c
 
           ksud_c = ksud_c.replace(
               "void on_boot_completed(void)\n{",
