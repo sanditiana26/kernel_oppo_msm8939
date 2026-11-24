@@ -40,6 +40,7 @@ jobs:
           echo '#include <linux/sched.h>' > include/linux/sched/task_stack.h
           sed -i '/MODULE_IMPORT_NS/d' KernelSU/kernel/*.c
           sed -i 's/KSU_VERSION := .*/KSU_VERSION := 12340/' KernelSU/kernel/Makefile
+          sed -i 's/full_name_hash(NULL, /full_name_hash(/g' KernelSU/kernel/throne_tracker.c
 
           ln -sf ../KernelSU/kernel drivers/kernelsu
           grep -q "kernelsu/Kconfig" drivers/Kconfig || sed -i '$i source "drivers/kernelsu/Kconfig"' drivers/Kconfig
