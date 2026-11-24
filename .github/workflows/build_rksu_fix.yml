@@ -298,6 +298,8 @@ jobs:
               f.write(code)
           EOF
           sed -i 's/static bool ksu_su_compat_enabled = true;/static bool ksu_su_compat_enabled = true;\n#define ksu_su_compat_enabled true/g' KernelSU/kernel/sucompat.c
+          sed -i 's/if (!ksu_sucompat_non_kp)/if (0)/g' KernelSU/kernel/sucompat.c
+          sed -i 's/if (!ksu_execveat_hook)/if (0)/g' KernelSU/kernel/sucompat.c
 
           # 1e. Aktifkan guard #ifdef CONFIG_KSU & salin hook execve ke compat_do_execve_common (32-bit)
           for hookfile in fs/exec.c fs/open.c fs/read_write.c fs/stat.c drivers/input/input.c kernel/sys.c; do
