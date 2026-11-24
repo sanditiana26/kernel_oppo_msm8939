@@ -18,9 +18,20 @@ jobs:
       - name: Setup RKSU & Custom Kernel Version
         run: |
           GH="https://github.com"
-          git clone "${GH}/rsuntk/KernelSU.git" KernelSU
+          git init KernelSU
           cd KernelSU
-          git checkout 2c1b26df~1
+          git remote add origin "${GH}/rsuntk/KernelSU.git"
+          git ls-remote --heads --tags origin
+          LEGACY_REF=$(git ls-remote --heads --tags origin | grep -iE "legacy|1\.0\.5" | head -n 1 | awk '{print $2}')
+          if [ -n "$LEGACY_REF" ]; then
+          git fetch --depth=1 origin "$LEGACY_REF"
+          git checkout FETCH_HEAD
+          else
+          echo "Mencari di seluruh refs..."
+          git fetch origin "+refs/*:refs/remotes/origin/*"
+          LEGACY_COMMIT=$(git log --all --diff-filter=D --format="%H" -- kernel/core_hook.c | head -n 1)
+          git checkout "${LEGACY_COMMIT}~1"
+          fi
           [ -f "kernel/core_hook.c" ] || { echo "FATAL: kernel/core_hook.c tidak ditemukan!"; exit 1; }
           echo "Checked out RKSU Legacy commit: $(git log -1 --oneline)"
           cd ..
