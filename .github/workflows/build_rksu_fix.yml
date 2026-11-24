@@ -20,12 +20,7 @@ jobs:
           GH="https://github.com"
           git clone "${GH}/rsuntk/KernelSU.git" KernelSU
           cd KernelSU
-          LEGACY_COMMIT=$(git log -S "compat_app_profile" -n 1 --format="%H" -- kernel/core_hook.c)
-          if [ -z "$LEGACY_COMMIT" ]; then
-          LEGACY_COMMIT=$(git log -S "ksu_set_app_profile" -n 1 --format="%H" -- kernel/core_hook.c)
-          fi
-          [ -n "$LEGACY_COMMIT" ] || { echo "FATAL: Commit legacy core_hook.c tidak ditemukan!"; exit 1; }
-          git checkout "$LEGACY_COMMIT"
+          git checkout 5f975e86~1
           echo "Checked out RKSU Legacy commit: $(git log -1 --oneline)"
           cd ..
           ln -sf ../KernelSU/kernel drivers/kernelsu
