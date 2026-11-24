@@ -18,7 +18,16 @@ jobs:
       - name: Setup RKSU & Custom Kernel Version
         run: |
           GH="https://github.com"
-          git clone --depth=1 -b v1.0.5-83-legacy "${GH}/rsuntk/KernelSU.git" KernelSU
+          git clone "${GH}/rsuntk/KernelSU.git" KernelSU
+          cd KernelSU
+          LEGACY_REF=$(git tag -l "*1.0.5*83*legacy*" | head -n 1)
+          if [ -n "$LEGACY_REF" ]; then
+          git checkout "$LEGACY_REF"
+          else
+          git checkout legacy || git checkout $(git branch -r | grep -i legacy | head -n 1 | sed 's|origin/||')
+          fi
+          echo "Checked out RKSU ref: $(git describe --tags --always)"
+          cd ..
           ln -sf ../KernelSU/kernel drivers/kernelsu
           grep -q "kernelsu/Kconfig" drivers/Kconfig || sed -i '$i source "drivers/kernelsu/Kconfig"' drivers/Kconfig
           grep -q "kernelsu" drivers/Makefile || echo 'obj-$(CONFIG_KSU) += kernelsu/' >> drivers/Makefile
