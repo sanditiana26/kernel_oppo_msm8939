@@ -73,6 +73,39 @@ jobs:
           find KernelSU/kernel -name "ksud.c" -exec sed -i \
             -e 's/(\*orig_read_iter)(struct kiocb \*, struct iov_iter \*)/(\*orig_read)(struct file \*, char __user \*, size_t, loff_t \*)/g' \
             -e 's/read_iter_proxy(struct kiocb \*iocb, struct iov_iter \*to)/ksu_read_proxy(struct file \*file, char __user \*buf, size_t count, loff_t \*pos)/g' {} +
+          # 5b. Backport groups_sort() untuk Kernel 3.10 di app_profile.c & matikan -Werror=implicit-function-declaration
+          python3 << 'EOF'
+          with open("KernelSU/kernel/app_profile.c", "r") as f:
+              ap = f.read()
+
+          groups_sort_backport = """#include <linux/sort.h>
+          static int ksu_gid_cmp(const void *a, const void *b)
+          {
+          	kgid_t gid_a = *(const kgid_t *)a;
+          	kgid_t gid_b = *(const kgid_t *)b;
+          	return gid_gt(gid_a, gid_b) - gid_lt(gid_a, gid_b);
+          }
+          static void ksu_groups_sort(struct group_info *group_info)
+          {
+          	int base = 0, n = group_info->ngroups;
+          	while (base < n) {
+          		int left = min(n - base, NGROUPS_PER_BLOCK);
+          		sort(group_info->blocks[base / NGROUPS_PER_BLOCK], left, sizeof(kgid_t), ksu_gid_cmp, NULL);
+          		base += NGROUPS_PER_BLOCK;
+          	}
+          }
+          #define groups_sort ksu_groups_sort
+          """
+
+          if "ksu_groups_sort" not in ap:
+              ap = groups_sort_backport + "\n" + ap
+              with open("KernelSU/kernel/app_profile.c", "w") as f:
+                  f.write(ap)
+          EOF
+
+          # Izinkan implicit-function-declaration pada semua Makefile di dalam KernelSU
+          find KernelSU/kernel -name "Makefile*" -exec sed -i 's/-Werror=implicit-function-declaration/-Wno-implicit-function-declaration/g' {} +
+          find KernelSU/kernel -name "Makefile*" -exec sh -c 'echo "ccflags-y += -Wno-error -Wno-implicit-function-declaration -Wno-return-type -Wno-declaration-after-statement" >> "$1"' _ {} \;
 
           # 6. Menyesuaikan Makefile KernelSU agar lolos GCC 4.9
           sed -i 's/-Wno-gcc-compat//g' KernelSU/kernel/Makefile
