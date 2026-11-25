@@ -153,6 +153,13 @@ jobs:
             -e 's/\.val\b//g' {} +
 
           find KernelSU/kernel -type f -name "*.c" -exec sed -i '1i #include "ksu_compat_310.h"' {} +
+          # 2c. Kosongkan lsm_hook.c untuk Kernel 3.10 (karena memakai Manual Hook, bukan LSM Hook 4.2+)
+          if [ -f "KernelSU/kernel/lsm_hook.c" ]; then
+            cat << 'EOF' > KernelSU/kernel/lsm_hook.c
+          #include <linux/init.h>
+          void __init ksu_lsm_hook_init(void) {}
+          EOF
+          fi
 
           # 3. Fix SELinux 3.10 (selinux_state -> variabel global 3.10)
           find KernelSU/kernel/selinux -type f \( -name "*.c" -o -name "*.h" \) -exec sed -i \
@@ -176,7 +183,7 @@ jobs:
               c = c.replace("(*orig_read_iter)(struct kiocb *, struct iov_iter *)", "(*orig_read)(struct file *, char __user *, size_t, loff_t *)")
               c = c.replace("read_iter_proxy(struct kiocb *iocb, struct iov_iter *to)", "ksu_read_proxy(struct file *file, char __user *buf, size_t count, loff_t *pos)")
 
-              # Fix proc_ops -> file_operations untuk kernel 3.10
+           # Fix proc_ops -> file_operations untuk kernel 3.10
               c = c.replace("struct proc_ops", "struct file_operations")
               c = c.replace(".proc_open", ".open")
               c = c.replace(".proc_read", ".read")
@@ -243,7 +250,6 @@ jobs:
           # 6. Matikan seluruh -Werror & flag khusus GCC baru pada semua Makefile KernelSU
           find KernelSU/kernel -name "Makefile*" -exec sed -i \
             -e 's/-Wno-gcc-compat//g' \
-            -e 's/-Wno-int-conversion//g' \
             -e 's/-Werror=implicit-function-declaration/-Wno-implicit-function-declaration/g' \
             -e 's/-Werror//g' {} +
           find KernelSU/kernel -name "Makefile*" -exec sh -c 'echo "ccflags-y += -Wno-error -Wno-implicit-function-declaration -Wno-int-conversion -Wno-incompatible-pointer-types -Wno-return-type -Wno-declaration-after-statement -I\$(srctree)/drivers/kernelsu" >> "$1"' _ {} \;
