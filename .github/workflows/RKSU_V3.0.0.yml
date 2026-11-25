@@ -15,288 +15,43 @@ jobs:
         sudo apt-get update
         sudo apt-get install -y bc bison build-essential ccache curl flex g++-multilib gcc-multilib git gnupg gperf imagemagick lib32ncurses-dev lib32readline-dev lib32z1-dev liblz4-tool libncurses5-dev libsdl1.2-dev libssl-dev libxml2 libxml2-utils lzop pngcrush rsync schedtool squashfs-tools xsltproc zip zlib1g-dev python-is-python3
 
-    - name: Setup RKSU & Custom Kernel Version
+    - name: Setup RKSU 3.0.0 & Custom Kernel Version
       run: |
           GH="https://github.com"
-          git clone --depth=1 -b v1.0.5-83-legacy "${GH}/DXRN-MoonWake/RKSU.git" KernelSU
+          git clone --depth=1 -b 3.0.0-30-legacy "${GH}/sanditiana26/RKSU.git" KernelSU || git clone --depth=1 -b new_upstream "${GH}/sanditiana26/RKSU.git" KernelSU
           ln -sf ../KernelSU/kernel drivers/kernelsu
           grep -q "kernelsu/Kconfig" drivers/Kconfig || sed -i '$i source "drivers/kernelsu/Kconfig"' drivers/Kconfig
           grep -q "kernelsu" drivers/Makefile || echo 'obj-$(CONFIG_KSU) += kernelsu/' >> drivers/Makefile
           sed -i 's/depends on OVERLAY_FS/depends on EXT4_FS/g' KernelSU/kernel/Kconfig
           sed -i 's/depends on KPROBES/depends on EXT4_FS/g' KernelSU/kernel/Kconfig
           sed -i 's/default n/default y/g' KernelSU/kernel/Kconfig
-          # 1. Hapus lsm_hooks.h & perbaiki inisialisasi core_hook.c
+
+          # Hapus include lsm_hooks.h jika belum ada di kernel 3.10
           sed -i '/#include <linux\/lsm_hooks.h>/d' KernelSU/kernel/*.c KernelSU/kernel/*.h
-          sed -i '693,$d' KernelSU/kernel/core_hook.c
-          cat << 'EOF' >> KernelSU/kernel/core_hook.c
-          void __init ksu_lsm_hook_init(void) {}
-          void __init ksu_core_init(void)
-          {
-          	pr_info("KernelSU: ksu_core_init started successfully!\n");
-          	ksu_lsm_hook_init();
-          	ksu_allowlist_init();
-          	ksu_throne_tracker_init();
-          	ksu_sucompat_init();
-          }
-          void ksu_core_exit(void)
-          {
-          	ksu_allowlist_exit();
-          	ksu_throne_tracker_exit();
-          	ksu_sucompat_exit();
-          }
-          EOF
 
-
-          # 1b. Pastikan ksu.c mencetak log dmesg saat boot
-          sed -i 's/ksu_core_init();/pr_info("KernelSU: kernelsu_init triggered!\\n"); ksu_core_init();/g' KernelSU/kernel/ksu.c
-
-          
-          # 1c. Hook prctl di kernel/sys.c (RKSU v12340 - Mount & SU aktif + tidak mental)
+          # Hook sys_reboot di kernel/sys.c (pengganti prctl di RKSU 3.0.0)
           python3 << 'EOF'
           import re
 
           with open("kernel/sys.c", "r") as f:
               content = f.read()
 
-          inc_hdr = '#include <linux/compat.h>\n#include "../drivers/kernelsu/ksu.h"\n'
-          prctl_decl = "SYSCALL_DEFINE5(prctl,"
-          content = content.replace(prctl_decl, inc_hdr + prctl_decl, 1)
+          inc_hdr = '#ifdef CONFIG_KSU\nextern int ksu_handle_sys_reboot(int magic1, int magic2, unsigned int cmd, void __user **arg);\n#endif\n'
+          reboot_decl = "SYSCALL_DEFINE4(reboot,"
+          content = content.replace(reboot_decl, inc_hdr + reboot_decl, 1)
 
-          hook_code = """if ((u32)option == 0xdeadbeef) {
-          		extern int ksu_handle_prctl(int option, unsigned long arg2, unsigned long arg3, unsigned long arg4, unsigned long arg5);
-          		extern bool ksu_set_app_profile(struct app_profile *profile, bool persist);
-          		extern bool ksu_get_app_profile(struct app_profile *profile);
-          		extern void escape_to_root(void);
-          		u32 ksu_ver = 12340, ksu_ok = 0xdeadbeef, cmd = (u32)arg2;
-          		void __user *p3 = is_compat_task() ? compat_ptr((u32)arg3) : (void __user *)arg3;
-          		void __user *p4 = is_compat_task() ? compat_ptr((u32)arg4) : (void __user *)arg4;
-          		void __user *p5 = is_compat_task() ? compat_ptr((u32)arg5) : (void __user *)arg5;
-          		if (cmd == 1 || cmd == 2) {
-          			if (p3) copy_to_user(p3, &ksu_ver, sizeof(ksu_ver));
-          			if (p5) copy_to_user(p5, &ksu_ok, sizeof(ksu_ok));
-          			return 0;
-          		}
-          		if (cmd == 0) {
-          			ksu_handle_prctl((int)(u32)option, 0, (unsigned long)p3, (unsigned long)p4, (unsigned long)p5);
-          			escape_to_root();
-          			if (p5) copy_to_user(p5, &ksu_ok, sizeof(ksu_ok));
-          			return 0;
-          		}
-          		if (cmd == 9) return 0;
-          		if (cmd == 14 || cmd == 15) {
-          			u8 su_en = 1;
-          			if (p3) copy_to_user(p3, &su_en, sizeof(su_en));
-          			if (p5) copy_to_user(p5, &ksu_ok, sizeof(ksu_ok));
-          			return 0;
-          		}
-          		if ((cmd == 10 || cmd == 11) && p3) {
-          			struct app_profile *kprof = kzalloc(sizeof(*kprof), GFP_KERNEL);
-          			int ret_prof = -EFAULT;
-          			if (kprof && copy_from_user(kprof, p3, sizeof(*kprof)) == 0) {
-          				if (cmd == 11) {
-          					bool persist = true;
-          					bool ok = ksu_set_app_profile(kprof, persist);
-          					pr_info("KernelSU: set_profile ver=%u key=%s su=%d ok=%d\\n", kprof->version, kprof->key, kprof->allow_su, ok);
-          					ret_prof = ok ? 0 : -EINVAL;
-          				} else {
-          					bool found = ksu_get_app_profile(kprof);
-          					if (found) {
-          						ret_prof = copy_to_user(p3, kprof, sizeof(*kprof)) ? -EFAULT : 0;
-          					} else {
-          						ret_prof = -ENOENT;
-          					}
-          				}
-          			}
-          			kfree(kprof);
-          			if (ret_prof == 0 && p5) copy_to_user(p5, &ksu_ok, sizeof(ksu_ok));
-          			return ret_prof;
-          		}
-          		return ksu_handle_prctl((int)(u32)option, (unsigned long)cmd, (unsigned long)p3, (unsigned long)p4, (unsigned long)p5);
-          	}"""
+          hook_reboot = """#ifdef CONFIG_KSU
+          	ksu_handle_sys_reboot(magic1, magic2, cmd, &arg);
+          #endif"""
 
-          m_prctl = re.search(r'SYSCALL_DEFINE5\(prctl,[^\)]+\)\s*\{', content)
-          content = content[:m_prctl.end()] + "\n\t" + hook_code + "\n" + content[m_prctl.end():]
+          m_reboot = re.search(r'SYSCALL_DEFINE4\(reboot,[^\)]+\)\s*\{', content)
+          if m_reboot:
+              content = content[:m_reboot.end()] + "\n" + hook_reboot + "\n" + content[m_reboot.end():]
 
           with open("kernel/sys.c", "w") as f:
               f.write(content)
           EOF
 
-          
-          # 1d. Patch core_hook.c untuk 32-bit compat App Profile (Umount + SuperUser) & Manager UID
-          python3 << 'EOF'
-          import re
-
-          with open("KernelSU/kernel/core_hook.c", "r") as f:
-              code = f.read()
-
-          code = code.replace("#include <linux/slab.h>", "#include <linux/slab.h>\n#include <linux/compat.h>", 1)
-          code = code.replace("u32 version = KERNEL_SU_VERSION;", "u32 version = 12340;")
-          code = code.replace("if (magic2 != CHANGE_MANAGER_UID)", "if ((u32)magic2 != CHANGE_MANAGER_UID)")
-          code = code.replace("if (arg2 == EVENT_POST_FS_DATA)", "if ((u32)arg2 == EVENT_POST_FS_DATA)")
-          code = code.replace("if (arg2 == EVENT_BOOT_COMPLETED)", "if ((u32)arg2 == EVENT_BOOT_COMPLETED)")
-          code = code.replace("if (arg2 == EVENT_MODULE_MOUNTED)", "if ((u32)arg2 == EVENT_MODULE_MOUNTED)")
-
-          code, mgr_hits = re.subn(
-              r"if\s*\(\s*!is_manager\s*\(\s*\)\s*\)",
-              "if (!is_manager() && from_kuid(&init_user_ns, current_uid()) >= 10000) { ksu_set_manager_uid(from_kuid(&init_user_ns, current_uid())); } if (!is_manager())",
-              code
-          )
-          print(f"Total pengecekan is_manager() dipatch: {mgr_hits}")
-
-          # Paksa fungsi cek status SU (sucompat) di core_hook.c selalu mengembalikan true
-          code = re.sub(
-              r"ksu_is_su_enabled\s*\(\s*\)",
-              "true",
-              code
-          )
-
-          compat_helpers = """
-          #ifdef CONFIG_COMPAT
-          struct compat_root_profile {
-          	int32_t uid;
-          	int32_t gid;
-          	int32_t groups_count;
-          	int32_t groups[KSU_MAX_GROUPS];
-          	struct {
-          		uint64_t effective;
-          		uint64_t permitted;
-          		uint64_t inheritable;
-          	} __attribute__((packed)) capabilities;
-          	char selinux_domain[KSU_SELINUX_DOMAIN];
-          	int32_t namespaces;
-          } __attribute__((packed));
-
-          struct compat_non_root_profile {
-          	bool umount_modules;
-          } __attribute__((packed));
-
-          struct compat_app_profile {
-          	uint32_t version;
-          	char key[KSU_MAX_PACKAGE_NAME];
-          	int32_t current_uid;
-          	bool allow_su;
-          	union {
-          		struct {
-          			bool use_default;
-          			char template_name[KSU_MAX_PACKAGE_NAME];
-          			struct compat_root_profile profile;
-          		} __attribute__((packed)) rp_config;
-          		struct {
-          			bool use_default;
-          			struct compat_non_root_profile profile;
-          		} __attribute__((packed)) nrp_config;
-          	} __attribute__((packed));
-          } __attribute__((packed));
-
-          static void compat_to_app_profile(const struct compat_app_profile *cprof, struct app_profile *prof)
-          {
-          	memset(prof, 0, sizeof(*prof));
-          	prof->version = cprof->version;
-          	memcpy(prof->key, cprof->key, sizeof(prof->key));
-          	prof->current_uid = cprof->current_uid;
-          	prof->allow_su = cprof->allow_su;
-          	if (cprof->allow_su) {
-          		prof->rp_config.use_default = cprof->rp_config.use_default;
-          		memcpy(prof->rp_config.template_name, cprof->rp_config.template_name, sizeof(prof->rp_config.template_name));
-          		prof->rp_config.profile.uid = cprof->rp_config.profile.uid;
-          		prof->rp_config.profile.gid = cprof->rp_config.profile.gid;
-          		prof->rp_config.profile.groups_count = cprof->rp_config.profile.groups_count;
-          		memcpy(prof->rp_config.profile.groups, cprof->rp_config.profile.groups, sizeof(prof->rp_config.profile.groups));
-          		prof->rp_config.profile.capabilities.effective = cprof->rp_config.profile.capabilities.effective;
-          		prof->rp_config.profile.capabilities.permitted = cprof->rp_config.profile.capabilities.permitted;
-          		prof->rp_config.profile.capabilities.inheritable = cprof->rp_config.profile.capabilities.inheritable;
-          		memcpy(prof->rp_config.profile.selinux_domain, cprof->rp_config.profile.selinux_domain, sizeof(prof->rp_config.profile.selinux_domain));
-          		prof->rp_config.profile.namespaces = cprof->rp_config.profile.namespaces;
-          	} else {
-          		prof->nrp_config.use_default = cprof->nrp_config.use_default;
-          		prof->nrp_config.profile.umount_modules = cprof->nrp_config.profile.umount_modules;
-          	}
-          }
-
-          static void app_profile_to_compat(const struct app_profile *prof, struct compat_app_profile *cprof)
-          {
-          	memset(cprof, 0, sizeof(*cprof));
-          	cprof->version = prof->version;
-          	memcpy(cprof->key, prof->key, sizeof(cprof->key));
-          	cprof->current_uid = prof->current_uid;
-          	cprof->allow_su = prof->allow_su;
-          	if (prof->allow_su) {
-          		cprof->rp_config.use_default = prof->rp_config.use_default;
-          		memcpy(cprof->rp_config.template_name, prof->rp_config.template_name, sizeof(cprof->rp_config.template_name));
-          		cprof->rp_config.profile.uid = prof->rp_config.profile.uid;
-          		cprof->rp_config.profile.gid = prof->rp_config.profile.gid;
-          		cprof->rp_config.profile.groups_count = prof->rp_config.profile.groups_count;
-          		memcpy(cprof->rp_config.profile.groups, prof->rp_config.profile.groups, sizeof(prof->rp_config.profile.groups));
-          		cprof->rp_config.profile.capabilities.effective = prof->rp_config.profile.capabilities.effective;
-          		cprof->rp_config.profile.capabilities.permitted = prof->rp_config.profile.capabilities.permitted;
-          		cprof->rp_config.profile.capabilities.inheritable = prof->rp_config.profile.capabilities.inheritable;
-          		memcpy(cprof->rp_config.profile.selinux_domain, prof->rp_config.profile.selinux_domain, sizeof(prof->rp_config.profile.selinux_domain));
-          		cprof->rp_config.profile.namespaces = prof->rp_config.profile.namespaces;
-          	} else {
-          		cprof->nrp_config.use_default = prof->nrp_config.use_default;
-          		cprof->nrp_config.profile.umount_modules = prof->nrp_config.profile.umount_modules;
-          	}
-          }
-          #endif
-          """
-
-          code = code.replace("int ksu_handle_prctl(", compat_helpers + "\nint ksu_handle_prctl(", 1)
-
-          def repl_copy_from(m):
-              src_ptr = m.group(1)
-              return f"""({{
-          		int __err = 0;
-          #ifdef CONFIG_COMPAT
-          		if (is_compat_task()) {{
-          			struct compat_app_profile __cprof;
-          			__err = copy_from_user(&__cprof, {src_ptr}, sizeof(__cprof));
-          			if (!__err)
-          				compat_to_app_profile(&__cprof, &profile);
-          		}} else
-          #endif
-          		{{
-          			__err = copy_from_user(&profile, {src_ptr}, sizeof(profile));
-          		}}
-          		pr_info("KernelSU: copy_from_user profile err=%d key=%s uid=%d allow=%d\\n", __err, profile.key, profile.current_uid, profile.allow_su);
-          		__err;
-          	}})"""
-
-          code, count_from = re.subn(
-              r"copy_from_user\s*\(\s*&profile\s*,\s*([^,]+)\s*,\s*sizeof\s*\([^)]+\)\s*\)",
-              repl_copy_from,
-              code
-          )
-
-          def repl_copy_to(m):
-              dst_ptr = m.group(1)
-              return f"""({{
-          		int __err = 0;
-          #ifdef CONFIG_COMPAT
-          		if (is_compat_task()) {{
-          			struct compat_app_profile __cprof;
-          			app_profile_to_compat(&profile, &__cprof);
-          			__err = copy_to_user({dst_ptr}, &__cprof, sizeof(__cprof));
-          		}} else
-          #endif
-          		{{
-          			__err = copy_to_user({dst_ptr}, &profile, sizeof(profile));
-          		}}
-          		pr_info("KernelSU: copy_to_user profile err=%d key=%s\\n", __err, profile.key);
-          		__err;
-          	}})"""
-
-          code, count_to = re.subn(
-              r"copy_to_user\s*\(\s*([^,]+)\s*,\s*&profile\s*,\s*sizeof\s*\([^)]+\)\s*\)",
-              repl_copy_to,
-              code
-          )
-
-          print(f"DEBUG PATCH: count_from={count_from}, count_to={count_to}")
-          assert count_from >= 1 and count_to >= 1, "Gagal patch copy_from_user / copy_to_user pada profile!"
-
-          with open("KernelSU/kernel/core_hook.c", "w") as f:
-              f.write(code)
-          EOF
 
           # 1e. Patch sucompat.c untuk kernel 3.10 (baca pointer kernel langsung agar Termux bisa su)
           python3 << 'EOF'
