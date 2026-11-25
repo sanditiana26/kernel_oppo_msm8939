@@ -114,6 +114,11 @@ jobs:
             -e 's/#include <linux\/sched\/user.h>/#include <linux\/sched.h>/g' {} +
 
           find KernelSU/kernel -type f -name "*.c" -exec sed -i '1i #include "ksu_compat_310.h"' {} +
+          # 2b. Fix error 'request for member val' pada Kernel 3.10 (uid_t / gid_t langsung tanpa .val)
+          find KernelSU/kernel -type f \( -name "*.c" -o -name "*.h" \) -exec sed -i \
+            -e 's/current_uid()\.val/current_uid()/g' \
+            -e 's/current_euid()\.val/current_euid()/g' \
+            -e 's/\.val\b//g' {} +
 
           # 3. Fix SELinux 3.10 (selinux_state -> variabel global 3.10)
           find KernelSU/kernel/selinux -type f \( -name "*.c" -o -name "*.h" \) -exec sed -i \
