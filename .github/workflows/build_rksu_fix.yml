@@ -2,20 +2,21 @@ name: Build Oppo A37f Kernel with RKSU Legacy (True Universal final)
 
 on:
   workflow_dispatch:
+
 jobs:
   build:
     runs-on: ubuntu-22.04
     steps:
-      - name: Checkout Kernel Source
-        uses: actions/checkout@v4
+    - name: Checkout Kernel Source
+      uses: actions/checkout@v4
 
-      - name: Install Build Dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y bc bison build-essential ccache curl flex g++-multilib gcc-multilib git gnupg gperf imagemagick lib32ncurses-dev lib32readline-dev lib32z1-dev liblz4-tool libncurses5-dev libsdl1.2-dev libssl-dev libxml2 libxml2-utils lzop pngcrush rsync schedtool squashfs-tools xsltproc zip zlib1g-dev python-is-python3
+    - name: Install Build Dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y bc bison build-essential ccache curl flex g++-multilib gcc-multilib git gnupg gperf imagemagick lib32ncurses-dev lib32readline-dev lib32z1-dev liblz4-tool libncurses5-dev libsdl1.2-dev libssl-dev libxml2 libxml2-utils lzop pngcrush rsync schedtool squashfs-tools xsltproc zip zlib1g-dev python-is-python3
 
-      - name: Setup RKSU & Custom Kernel Version
-        run: |
+    - name: Setup RKSU & Custom Kernel Version
+      run: |
           GH="https://github.com"
           git clone --depth=1 -b v1.0.5-83-legacy "${GH}/DXRN-MoonWake/RKSU.git" KernelSU
           ln -sf ../KernelSU/kernel drivers/kernelsu
@@ -539,8 +540,8 @@ jobs:
           echo 'CONFIG_KSU_MANUAL_HOOK=y' >> arch/arm64/configs/lineageos_a37f_defconfig
           echo 'CONFIG_KPROBES=n' >> arch/arm64/configs/lineageos_a37f_defconfig
 
-       - name: Fix AVC Denied Kamera & Senter
-         run: |
+    - name: Fix AVC Denied Kamera & Senter
+      run: |
           python3 << 'EOF'
           import re
 
@@ -570,39 +571,39 @@ jobs:
           print("BERHASIL patch avc_denied() untuk kamera, senter, dan HAL!")
           EOF
 
-       - name: Print RKSU app_profile struct
-         run: |
+    - name: Print RKSU app_profile struct
+      run: |
           grep -rn -A 45 "struct app_profile" drivers/kernelsu/
-       - name: Print RKSU prctl & ksu.h
-         run: |
+    - name: Print RKSU prctl & ksu.h
+      run: |
           head -n 65 drivers/kernelsu/ksu.h
           grep -rn -C 15 "ksu_set_app_profile" drivers/kernelsu/
 
-       - name: Clone Toolchains (GCC 4.9)
-         run: |
+    - name: Clone Toolchains (GCC 4.9)
+      run: |
           GH="https://github.com"
           mkdir -p $HOME/android/TOOLS/GCC
           git clone --depth=1 "${GH}/KudProject/aarch64-linux-android-4.9.git" $HOME/android/TOOLS/GCC/los-4.9-64
           git clone --depth=1 -b lineage-17.1 "${GH}/LineageOS/android_prebuilts_gcc_linux-x86_arm_arm-linux-androideabi-4.9.git" $HOME/android/TOOLS/GCC/los-4.9-32
 
-       - name: Run build.sh
-         env:
-           KBUILD_BUILD_USER: sanditiana26
-           KBUILD_BUILD_HOST: oppo-a37f
-         KCFLAGS: "-Wno-error"
-         run: |
-          chmod +x build.sh
-          ./build.sh
+    - name: Run build.sh
+      env:
+          KBUILD_BUILD_USER: sanditiana26
+          KBUILD_BUILD_HOST: oppo-a37f
+          KCFLAGS: "-Wno-error"
+      run: |
+         chmod +x build.sh
+         ./build.sh
 
-       - name: Verify KSU Config & Linking
-         run: |
+    - name: Verify KSU Config & Linking
+      run: |
           echo "=== Cek .config ==="
           grep "CONFIG_KSU" out/.config || echo "CONFIG_KSU NOT FOUND!"
           echo "=== Cek Symbol KernelSU di vmlinux ==="
           nm out/vmlinux | grep "ksu_" | head -n 20 || echo "KSU SYMBOLS NOT LINKED INTO VMLINUX!"
 
-       - name: Upload KernelSU ZIP
-         uses: actions/upload-artifact@v4
-         with:
+    - name: Upload KernelSU ZIP
+      uses: actions/upload-artifact@v4
+      with:
           name: A37F-RKSU-True-Universal-v3
           path: out/A37F_KERNEL_ASU_*.zip
