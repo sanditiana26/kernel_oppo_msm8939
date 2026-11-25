@@ -9,9 +9,6 @@ jobs:
     steps:
       - name: Checkout Kernel Source
         uses: actions/checkout@v4
-
-
-
       - name: Install Build Dependencies
         run: |
           sudo apt-get update
