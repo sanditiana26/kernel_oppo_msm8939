@@ -18,8 +18,8 @@ jobs:
     - name: Setup RKSU 3.0.0 & Custom Kernel Version
       run: |
           GH="https://github.com"
-          git clone --depth=1 -b 3.0.0-30-legacy "${GH}/sanditiana26/RKSU.git" KernelSU || git clone --depth=1 -b new_upstream "${GH}/sanditiana26/RKSU.git" KernelSU
-          ln -sf ../KernelSU/kernel drivers/kernelsu
+          git clone --depth=1 -b v3.0.0-30-legacy "${GH}/sanditiana26/RKSU.git" KernelSU || git clone --depth=1 -b new_upstream "${GH}/sanditiana26/RKSU.git" KernelSU
+          ls -la KernelSU/kernel/
           grep -q "kernelsu/Kconfig" drivers/Kconfig || sed -i '$i source "drivers/kernelsu/Kconfig"' drivers/Kconfig
           grep -q "kernelsu" drivers/Makefile || echo 'obj-$(CONFIG_KSU) += kernelsu/' >> drivers/Makefile
           sed -i 's/depends on OVERLAY_FS/depends on EXT4_FS/g' KernelSU/kernel/Kconfig
@@ -52,153 +52,6 @@ jobs:
               f.write(content)
           EOF
 
-
-          # 1e. Patch sucompat.c untuk kernel 3.10 (baca pointer kernel langsung agar Termux bisa su)
-          python3 << 'EOF'
-          import re
-
-          with open("KernelSU/kernel/sucompat.c", "r") as f:
-              sc = f.read()
-
-          sc = sc.replace("static bool ksu_su_compat_enabled = true;", "static bool ksu_su_compat_enabled = true;\n#define ksu_su_compat_enabled true")
-          sc = re.sub(r"if\s*\(\s*!ksu_sucompat_non_kp\s*\)", "if (0)", sc)
-          sc = re.sub(r"if\s*\(\s*!ksu_execveat_hook\s*\)", "if (0)", sc)
-
-          uid_check = "ksu_is_allow_uid_for_current(current_uid().val)" if "ksu_is_allow_uid_for_current" in sc else "ksu_is_allow_uid(current_uid().val)"
-
-          new_sucompat_execve = f"""int ksu_handle_execve_sucompat(int *fd, const char **filename_ptr,
-          			       void *argv, void *envp, int *flags)
-          {{
-          	const char su[] = "/system/bin/su";
-          	const char sh[] = "/system/bin/sh";
-
-          	if (!filename_ptr || !*filename_ptr)
-          		return 0;
-
-          	if (!{uid_check})
-          		return 0;
-
-          	if (unlikely(!memcmp(*filename_ptr, su, sizeof(su)))) {{
-          		pr_info("KernelSU: sucompat execve su->sh! uid=%d\\n", current_uid().val);
-          		*filename_ptr = sh;
-          	}}
-
-          	return 0;
-          }}"""
-
-          m = re.search(r"int\s+ksu_handle_execve_sucompat\s*\([^)]*\)\s*\{", sc)
-          assert m, "Fungsi ksu_handle_execve_sucompat tidak ditemukan!"
-
-          brace_count = 1
-          idx = m.end()
-          while idx < len(sc) and brace_count > 0:
-              if sc[idx] == "{":
-                  brace_count += 1
-              elif sc[idx] == "}":
-                  brace_count -= 1
-              idx += 1
-
-          assert brace_count == 0, "Kurung kurawal fungsi ksu_handle_execve_sucompat tidak seimbang!"
-          sc = sc[:m.start()] + new_sucompat_execve + sc[idx:]
-
-          with open("KernelSU/kernel/sucompat.c", "w") as f:
-              f.write(sc)
-          print("BERHASIL patch ksu_handle_execve_sucompat dengan hitungan kurung presisi!")
-          EOF
-
-          # 1f. Fix final (100% terbukti dari log):
-          #     - Tambahkan static sh[] & escape_to_root() di sucompat.c
-          #     - Muat /data/adb/ksu/.allowlist otomatis satu kali saat prctl pertama dipanggil setelah boot!
-          python3 << 'EOF'
-          # 1. Fix sucompat.c (static sh[] + escape_to_root())
-          with open("KernelSU/kernel/sucompat.c", "r") as f:
-              su_c = f.read()
-
-          if "extern void escape_to_root(void);" not in su_c:
-              su_c = "extern void escape_to_root(void);\n" + su_c
-
-          assert 'const char sh[] = "/system/bin/sh";' in su_c, "Variabel sh[] tidak ditemukan di sucompat.c!"
-          su_c = su_c.replace('const char sh[] = "/system/bin/sh";', 'static const char sh[] = "/system/bin/sh";', 1)
-
-          old_su_block = '''\tif (unlikely(!memcmp(*filename_ptr, su, sizeof(su)))) {
-          \t\tpr_info("KernelSU: sucompat execve su->sh! uid=%d\\n", current_uid().val);
-          \t\t*filename_ptr = sh;
-          \t}'''
-
-          new_su_block = '''\tif (unlikely(!memcmp(*filename_ptr, su, sizeof(su)))) {
-          \t\tpr_info("KernelSU: sucompat execve su->sh! uid=%d\\n", current_uid().val);
-          \t\t*filename_ptr = sh;
-          \t\tescape_to_root();
-          \t}'''
-
-          assert old_su_block in su_c, "Blok if memcmp di sucompat.c tidak cocok!"
-          su_c = su_c.replace(old_su_block, new_su_block, 1)
-
-          with open("KernelSU/kernel/sucompat.c", "w") as f:
-              f.write(su_c)
-          print("BERHASIL 1/2: sucompat.c diperbaiki!")
-
-          # 2. Fix kernel/sys.c: Auto-load .allowlist satu kali saat prctl dipanggil setelah boot
-          with open("kernel/sys.c", "r") as f:
-              sys_c = f.read()
-
-          target_prctl = 'if ((u32)option == 0xdeadbeef) {'
-          autoload_code = '''if ((u32)option == 0xdeadbeef) {
-          \t\tstatic bool ksu_allowlist_reloaded = false;
-          \t\tif (!ksu_allowlist_reloaded && (u32)arg2 != 11) {
-          \t\t\textern void ksu_load_allow_list(void);
-          \t\t\tksu_allowlist_reloaded = true;
-          \t\t\tpr_info("KernelSU: auto-loading .allowlist on first prctl!\\n");
-          \t\t\tksu_load_allow_list();
-          \t\t}'''
-
-          assert target_prctl in sys_c, "Blok 0xdeadbeef di kernel/sys.c tidak ditemukan!"
-          sys_c = sys_c.replace(target_prctl, autoload_code, 1)
-
-          with open("kernel/sys.c", "w") as f:
-              f.write(sys_c)
-          print("BERHASIL 2/2: auto-load .allowlist ditambahkan ke kernel/sys.c!")
-          EOF
-         
-
-
-          # 1g. Aktifkan guard #ifdef CONFIG_KSU & salin hook execve ke compat_do_execve_common (32-bit)
-          for hookfile in fs/exec.c fs/open.c fs/read_write.c fs/stat.c drivers/input/input.c kernel/sys.c; do
-            if [ -f "$hookfile" ]; then
-              sed -i 's/#ifdef CONFIG_KSU_MANUAL_HOOK/#ifdef CONFIG_KSU/g' "$hookfile"
-            fi
-          done
-
-          python3 << 'EOF'
-          import re
-
-          with open("fs/exec.c", "r") as f:
-              exec_c = f.read()
-
-          m_src = re.search(
-              r'do_execve_common\s*\([^\)]*\)\s*\{.*?(?P<hook>#ifdef CONFIG_KSU.*?#endif)',
-              exec_c,
-              re.DOTALL
-          )
-          assert m_src, "Blok hook #ifdef CONFIG_KSU di do_execve_common tidak ditemukan!"
-          hook_block = m_src.group("hook")
-
-          m_compat = re.search(r'(compat_do_execve_common\s*\([^\)]*\)\s*\{)', exec_c)
-          if m_compat:
-              start = m_compat.end()
-              m_ins = re.search(r'\n(\s*(?:retval\s*=|bprm\s*=|if\s*\(|path\s*=))', exec_c[start:start+1200])
-              assert m_ins, "Titik sisip di compat_do_execve_common tidak ditemukan!"
-              pos = start + m_ins.start()
-              if hook_block not in exec_c[start:pos+500]:
-                  exec_c = exec_c[:pos] + "\n" + hook_block + exec_c[pos:]
-                  print("BERHASIL menyalin hook execve ke compat_do_execve_common!")
-
-          with open("fs/exec.c", "w") as f:
-              f.write(exec_c)
-          EOF
-          
-          
-
           # 2. Fix error 'request for member val' pada Kernel 3.10
           find KernelSU/kernel -type f \( -name "*.c" -o -name "*.h" \) -exec sed -i \
             -e 's/current_uid()\.val/current_uid()/g' \
@@ -217,69 +70,7 @@ jobs:
           # 4. Fix read_iter menjadi read pada ksud.c untuk Kernel 3.10
           sed -i 's/(\*orig_read_iter)(struct kiocb \*, struct iov_iter \*)/(\*orig_read)(struct file \*, char __user \*, size_t, loff_t \*)/g' KernelSU/kernel/ksud.c
           sed -i 's/read_iter_proxy(struct kiocb \*iocb, struct iov_iter \*to)/ksu_read_proxy(struct file \*file, char __user \*buf, size_t count, loff_t \*pos)/g' KernelSU/kernel/ksud.c
-          sed -i 's/read_iter_proxy/ksu_read_proxy/g' KernelSU/kernel/ksud.c
-          sed -i 's/struct file \*file = iocb->ki_filp;/\/\/ patched for 3.10/g' KernelSU/kernel/ksud.c
-          sed -i 's/iocb->ki_pos == 0/\*pos == 0/g' KernelSU/kernel/ksud.c
-          sed -i 's/orig_read_iter(iocb, to)/orig_read(file, buf, count, pos)/g' KernelSU/kernel/ksud.c
-          sed -i 's/if (orig_read_iter)/if (orig_read)/g' KernelSU/kernel/ksud.c
-          sed -i 's/orig_read_iter = file->f_op->read_iter;/orig_read = file->f_op->read;/g' KernelSU/kernel/ksud.c
-          sed -i 's/fops_proxy.read_iter = .*/fops_proxy.read = ksu_read_proxy;/g' KernelSU/kernel/ksud.c
 
-          # 5. Tambahkan fungsi pembantu Kernel 3.10
-          cat << 'EOF' >> KernelSU/kernel/kernel_compat.c
-          #include <linux/sort.h>
-          #include <linux/dcache.h>
-          #include <linux/fs.h>
-          void ext4_unregister_sysfs(struct super_block *sb) {}
-          #if LINUX_VERSION_CODE < KERNEL_VERSION(3, 18, 0)
-          char *bin2hex(char *dst, const void *src, size_t count)
-          {
-          	const unsigned char *_src = src;
-          	while (count--)
-          		dst = hex_byte_pack(dst, *_src++);
-          	return dst;
-          }
-          ssize_t strscpy(char *dest, const char *src, size_t count)
-          {
-          	long res = 0;
-          	if (count == 0)
-          		return -E2BIG;
-          	while (count) {
-          		char c = src[res];
-          		dest[res] = c;
-          		if (!c)
-          			return res;
-          		res++;
-          		count--;
-          	}
-          	if (res)
-          		dest[res - 1] = '\0';
-          	return -E2BIG;
-          }
-          static int gid_cmp(const void *_a, const void *_b)
-          {
-          	kgid_t a = *(kgid_t *)_a;
-          	kgid_t b = *(kgid_t *)_b;
-          	return gid_gt(a, b) - gid_lt(a, b);
-          }
-          void groups_sort(struct group_info *group_info)
-          {
-          	int nblocks, i;
-          	int count = group_info->ngroups;
-          	if (!count)
-          		return;
-          	nblocks = group_info->nblocks;
-          	for (i = 0; i < nblocks; i++) {
-          		int cp_count = min(NGROUPS_PER_BLOCK, count);
-          		sort(group_info->blocks[i], cp_count, sizeof(kgid_t), gid_cmp, NULL);
-          		count -= NGROUPS_PER_BLOCK;
-          	}
-          }
-          bool d_is_reg(const struct dentry *dentry)
-          {
-          	return dentry && dentry->d_inode && S_ISREG(dentry->d_inode->i_mode);
-          }
-          #endif
           EOF
 
           # 6. Menyesuaikan Makefile KernelSU agar lolos GCC 4.9
@@ -295,45 +86,7 @@ jobs:
           echo 'CONFIG_KSU_MANUAL_HOOK=y' >> arch/arm64/configs/lineageos_a37f_defconfig
           echo 'CONFIG_KPROBES=n' >> arch/arm64/configs/lineageos_a37f_defconfig
 
-    - name: Fix AVC Denied Kamera & Senter
-      run: |
-          python3 << 'EOF'
-          import re
-
-          with open("security/selinux/avc.c", "r") as f:
-              avc = f.read()
-
-          # Cari deklarasi avc_denied dengan regex (mendukung static int, static noinline int, dll.)
-          m = re.search(r'(?:static\s+)?(?:noinline\s+)?int\s+avc_denied\s*\([^)]*\)\s*\{', avc)
-          assert m, "Fungsi avc_denied tidak ditemukan di security/selinux/avc.c!"
-
-          patch = """
-          \tif (current && (
-          \t    strstr(current->comm, "qcamera") ||
-          \t    strstr(current->comm, "camera") ||
-          \t    strstr(current->comm, "mediaserver") ||
-          \t    strstr(current->comm, "provider@") ||
-          \t    strstr(current->comm, "system_server") ||
-          \t    strstr(current->comm, "surfaceflinger") ||
-          \t    strstr(current->comm, "thermal") ||
-          \t    strstr(current->comm, "init")))
-          \t\treturn 0;
-          """
-
-          avc = avc[:m.end()] + patch + avc[m.end():]
-          with open("security/selinux/avc.c", "w") as f:
-              f.write(avc)
-          print("BERHASIL patch avc_denied() untuk kamera, senter, dan HAL!")
-          EOF
-
-    - name: Print RKSU app_profile struct
-      run: |
-          grep -rn -A 45 "struct app_profile" drivers/kernelsu/
-    - name: Print RKSU prctl & ksu.h
-      run: |
-          head -n 65 drivers/kernelsu/ksu.h
-          grep -rn -C 15 "ksu_set_app_profile" drivers/kernelsu/
-
+    
     - name: Clone Toolchains (GCC 4.9)
       run: |
           GH="https://github.com"
