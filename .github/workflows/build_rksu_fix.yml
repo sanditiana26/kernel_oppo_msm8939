@@ -2,13 +2,13 @@ name: Build Oppo A37f Kernel with RKSU Legacy (True Universal final)
 
 on:
   workflow_dispatch:
-
 jobs:
   build:
     runs-on: ubuntu-22.04
     steps:
       - name: Checkout Kernel Source
         uses: actions/checkout@v4
+
       - name: Install Build Dependencies
         run: |
           sudo apt-get update
