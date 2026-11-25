@@ -1,4 +1,21 @@
-       - name: Setup RKSU & Custom Kernel Version
+name: Build Oppo A37f Kernel with RKSU Legacy (True Universal final)
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout Kernel Source
+        uses: actions/checkout@v4
+
+      - name: Install Build Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y bc bison build-essential ccache curl flex g++-multilib gcc-multilib git gnupg gperf imagemagick lib32ncurses-dev lib32readline-dev lib32z1-dev liblz4-tool libncurses5-dev libsdl1.2-dev libssl-dev libxml2 libxml2-utils lzop pngcrush rsync schedtool squashfs-tools xsltproc zip zlib1g-dev python-is-python3
+
+      - name: Setup RKSU & Custom Kernel Version
         run: |
           GH="https://github.com"
           git clone --depth=1 -b v1.0.5-83-legacy "${GH}/DXRN-MoonWake/RKSU.git" KernelSU
