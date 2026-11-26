@@ -276,29 +276,37 @@ jobs:
 
           print("ksud.c berhasil di-patch untuk Linux 3.10!")
           EOF
-    - name: Patch RKSU rules.c for Linux 3.10.108
+    - name: Patch RKSU ext4_unregister_sysfs for Linux 3.10.108
       run: |
           python3 - << 'EOF'
           import os, re
 
-          candidates = ["KernelSU/kernel/rules.c", "drivers/kernelsu/rules.c"]
-          target = next((p for p in candidates if os.path.exists(p)), None)
+          patched = False
+          for root_dir in ["KernelSU/kernel", "drivers/kernelsu"]:
+              if not os.path.exists(root_dir):
+                  continue
+              for dirpath, _, filenames in os.walk(root_dir):
+                  for fname in filenames:
+                      if fname.endswith(".c"):
+                          fpath = os.path.join(dirpath, fname)
+                          with open(fpath, "r", errors="ignore") as f:
+                              code = f.read()
+                          if "ext4_unregister_sysfs" in code:
+                              new_code = re.sub(
+                                  r'ext4_unregister_sysfs\([^)]*\);',
+                                  '// ext4_unregister_sysfs disabled for 3.10',
+                                  code
+                              )
+                              with open(fpath, "w") as f:
+                                  f.write(new_code)
+                              print(f"Berhasil patch {fpath}!")
+                              patched = True
 
-          if not target:
-              raise FileNotFoundError("File rules.c tidak ditemukan di KernelSU/kernel/ maupun drivers/kernelsu/")
-
-          with open(target, "r") as f:
-              code = f.read()
-
-          code = re.sub(r'ext4_unregister_sysfs\([^)]*\);', '// ext4_unregister_sysfs disabled for 3.10', code)
-
-          with open(target, "w") as f:
-              f.write(code)
-
-          print(f"{target} berhasil di-patch untuk Linux 3.10!")
+          if not patched:
+              print("Peringatan: ext4_unregister_sysfs tidak ditemukan.")
           EOF
-
-
+ 
+    
           # 6. Matikan seluruh -Werror & flag khusus GCC baru pada semua Makefile KernelSU
           find KernelSU/kernel -name "Makefile*" -exec sed -i \
             -e 's/-Wno-gcc-compat//g' \
