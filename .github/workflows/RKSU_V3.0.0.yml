@@ -276,36 +276,44 @@ jobs:
 
           print("ksud.c berhasil di-patch untuk Linux 3.10!")
           EOF
+    
     - name: Patch RKSU ext4_unregister_sysfs for Linux 3.10.108
       run: |
           python3 - << 'EOF'
           import os, re
 
-          patched = False
           for root_dir in ["KernelSU/kernel", "drivers/kernelsu"]:
               if not os.path.exists(root_dir):
                   continue
               for dirpath, _, filenames in os.walk(root_dir):
                   for fname in filenames:
-                      if fname.endswith(".c"):
+                      if fname.endswith((".c", ".h")):
                           fpath = os.path.join(dirpath, fname)
                           with open(fpath, "r", errors="ignore") as f:
                               code = f.read()
-                          if "ext4_unregister_sysfs" in code:
-                              new_code = re.sub(
-                                  r'ext4_unregister_sysfs\([^)]*\);',
-                                  '// ext4_unregister_sysfs disabled for 3.10',
-                                  code
-                              )
-                              with open(fpath, "w") as f:
-                                  f.write(new_code)
-                              print(f"Berhasil patch {fpath}!")
-                              patched = True
 
-          if not patched:
-              print("Peringatan: ext4_unregister_sysfs tidak ditemukan.")
-          EOF
- 
+                          orig_code = code
+
+                          # 1. Hapus definisi makro yang menimpa nuke_ext4_sysfs menjadi void
+                          code = re.sub(r'#define\s+nuke_ext4_sysfs.*', '', code)
+
+                          # 2. Pastikan deklarasi/definisi nuke_ext4_sysfs memakai 'int' (bukan 'void int')
+                          code = re.sub(r'\bvoid\s+int\s+nuke_ext4_sysfs', 'int nuke_ext4_sysfs', code)
+                          code = re.sub(r'\bvoid\s+nuke_ext4_sysfs\s*\(', 'int nuke_ext4_sysfs(', code)
+
+                          # 3. Nonaktifkan pemanggilan ext4_unregister_sysfs di kernel 3.10
+                          code = re.sub(
+                              r'ext4_unregister_sysfs\([^)]*\);',
+                              '// ext4_unregister_sysfs disabled for 3.10',
+                              code
+                          )
+
+                          if code != orig_code:
+                              with open(fpath, "w") as f:
+                                  f.write(code)
+                              print(f"Berhasil patch {fpath}!")
+            EOF
+
     
           # 6. Matikan seluruh -Werror & flag khusus GCC baru pada semua Makefile KernelSU
           find KernelSU/kernel -name "Makefile*" -exec sed -i \
