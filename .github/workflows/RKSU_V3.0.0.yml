@@ -279,20 +279,25 @@ jobs:
     - name: Patch RKSU rules.c for Linux 3.10.108
       run: |
           python3 - << 'EOF'
-          import re
+          import os, re
 
-          path = "drivers/kernelsu/rules.c"
-          with open(path, "r") as f:
+          candidates = ["KernelSU/kernel/rules.c", "drivers/kernelsu/rules.c"]
+          target = next((p for p in candidates if os.path.exists(p)), None)
+
+          if not target:
+              raise FileNotFoundError("File rules.c tidak ditemukan di KernelSU/kernel/ maupun drivers/kernelsu/")
+
+          with open(target, "r") as f:
               code = f.read()
 
           code = re.sub(r'ext4_unregister_sysfs\([^)]*\);', '// ext4_unregister_sysfs disabled for 3.10', code)
 
-          with open(path, "w") as f:
+          with open(target, "w") as f:
               f.write(code)
 
-          print("rules.c berhasil di-patch untuk Linux 3.10!")
+          print(f"{target} berhasil di-patch untuk Linux 3.10!")
           EOF
-  
+
 
           # 6. Matikan seluruh -Werror & flag khusus GCC baru pada semua Makefile KernelSU
           find KernelSU/kernel -name "Makefile*" -exec sed -i \
