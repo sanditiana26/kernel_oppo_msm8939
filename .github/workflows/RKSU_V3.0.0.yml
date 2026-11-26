@@ -1,4 +1,4 @@
--name: Build Oppo A37f Kernel with RKSU Legacy (3.0.0-30)
+name: Build Oppo A37f Kernel with RKSU Legacy (3.0.0-30)
 
 on:
   workflow_dispatch:
@@ -170,7 +170,7 @@ jobs:
             -e 's/selinux_state\.ss->policy_rwlock/policy_rwlock/g' \
             -e 's/selinux_state\.initialized/ss_initialized/g' {} +
 
-                    # 4. Fix ksud.c + dummy stub hook lama (kernel_compat.c sudah cocok dengan 3.10 tanpa diubah)
+          # 4. Fix ksud.c + dummy stub hook lama (kernel_compat.c sudah cocok dengan 3.10 tanpa diubah)
           python3 << 'EOF'
           import glob
 
