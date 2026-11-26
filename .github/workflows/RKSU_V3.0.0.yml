@@ -246,6 +246,47 @@ jobs:
             -e 's/-Werror//g' {} +
           find KernelSU/kernel -name "Makefile*" -exec sh -c 'echo "ccflags-y += -Wno-error -Wno-implicit-function-declaration -Wno-int-conversion -Wno-incompatible-pointer-types -Wno-return-type -Wno-declaration-after-statement -I\$(srctree)/drivers/kernelsu" >> "$1"' _ {} \;
 
+    - name: Patch RKSU ksud.c for Linux 3.10.108
+      run: |
+          python3 - << 'EOF'
+          import re
+
+          path = "drivers/kernelsu/ksud.c"
+          with open(path, "r") as f:
+              code = f.read()
+
+          # 1. Tambahkan definisi d_is_reg untuk Linux 3.10
+          compat_macro = (
+              "#ifndef d_is_reg\n"
+              "#define d_is_reg(d) ((d)->d_inode && S_ISREG((d)->d_inode->i_mode))\n"
+              "#endif\n"
+          )
+          if "d_is_reg(d)" not in code:
+              code = compat_macro + code
+
+          # 2. Pastikan pointer orig_read tersedia
+          if "(*orig_read)" not in code:
+              code = code.replace(
+                  "static struct file_operations fops_proxy;",
+                  "static ssize_t (*orig_read)(struct file *, char __user *, size_t, loff_t *);\nstatic struct file_operations fops_proxy;"
+              )
+
+          # 3. Perbaiki isi ksu_read_proxy dari iocb/orig_read_iter ke file/orig_read
+          code = code.replace("iocb->ki_pos == 0", "file->f_pos == 0")
+          code = code.replace("orig_read_iter(iocb, to)", "orig_read(file, buf, count, pos)")
+
+          # 4. Ganti hook f_op->read_iter menjadi f_op->read untuk kernel < 3.16
+          code = code.replace("orig_read_iter = file->f_op->read_iter;", "orig_read = file->f_op->read;")
+          code = code.replace("fops_proxy.read_iter = read_iter_proxy;", "fops_proxy.read = ksu_read_proxy;")
+          code = code.replace("fops_proxy.read_iter = ksu_read_proxy;", "fops_proxy.read = ksu_read_proxy;")
+
+          with open(path, "w") as f:
+              f.write(code)
+
+          print("ksud.c berhasil di-patch untuk Linux 3.10!")
+          EOF
+
+
           # 7. Konfigurasi Defconfig Oppo A37f
           sed -i '/CONFIG_LOCALVERSION=/d' arch/arm64/configs/lineageos_a37f_defconfig
           echo 'CONFIG_LOCALVERSION="-Sanditiana26"' >> arch/arm64/configs/lineageos_a37f_defconfig
