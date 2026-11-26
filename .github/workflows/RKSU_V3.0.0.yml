@@ -276,6 +276,23 @@ jobs:
 
           print("ksud.c berhasil di-patch untuk Linux 3.10!")
           EOF
+    - name: Patch RKSU rules.c for Linux 3.10.108
+      run: |
+          python3 - << 'EOF'
+          import re
+
+          path = "drivers/kernelsu/rules.c"
+          with open(path, "r") as f:
+              code = f.read()
+
+          code = re.sub(r'ext4_unregister_sysfs\([^)]*\);', '// ext4_unregister_sysfs disabled for 3.10', code)
+
+          with open(path, "w") as f:
+              f.write(code)
+
+          print("rules.c berhasil di-patch untuk Linux 3.10!")
+          EOF
+  
 
           # 6. Matikan seluruh -Werror & flag khusus GCC baru pada semua Makefile KernelSU
           find KernelSU/kernel -name "Makefile*" -exec sed -i \
