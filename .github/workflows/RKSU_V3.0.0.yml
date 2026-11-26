@@ -1,4 +1,4 @@
-name: Build Oppo A37f Kernel with RKSU Legacy (3.0.0-30)
+-name: Build Oppo A37f Kernel with RKSU Legacy (3.0.0-30)
 
 on:
   workflow_dispatch:
@@ -170,9 +170,9 @@ jobs:
             -e 's/selinux_state\.ss->policy_rwlock/policy_rwlock/g' \
             -e 's/selinux_state\.initialized/ss_initialized/g' {} +
 
-          # 4. Fix kernel_read / kernel_write 3.10 di kernel_compat.c & ksud.c + dummy stub hook lama
+                    # 4. Fix ksud.c + dummy stub hook lama (kernel_compat.c sudah cocok dengan 3.10 tanpa diubah)
           python3 << 'EOF'
-          import glob, re
+          import glob
 
           for path in glob.glob("KernelSU/kernel/**/*.c", recursive=True):
               with open(path, "r") as f:
@@ -183,7 +183,7 @@ jobs:
               c = c.replace("(*orig_read_iter)(struct kiocb *, struct iov_iter *)", "(*orig_read)(struct file *, char __user *, size_t, loff_t *)")
               c = c.replace("read_iter_proxy(struct kiocb *iocb, struct iov_iter *to)", "ksu_read_proxy(struct file *file, char __user *buf, size_t count, loff_t *pos)")
 
-           # Fix proc_ops -> file_operations untuk kernel 3.10
+              # Fix proc_ops -> file_operations untuk kernel 3.10
               c = c.replace("struct proc_ops", "struct file_operations")
               c = c.replace(".proc_open", ".open")
               c = c.replace(".proc_read", ".read")
@@ -192,14 +192,6 @@ jobs:
               c = c.replace(".proc_release", ".release")
               c = c.replace(".proc_ioctl", ".unlocked_ioctl")
               c = c.replace(".proc_compat_ioctl", ".compat_ioctl")
-
-              # Fix kernel_read(file, buf, count, pos_ptr) -> kernel_read(file, *pos_ptr, buf, count) pada 3.10
-              if "kernel_compat.c" in path:
-                  c = re.sub(
-                      r'kernel_read\s*\(\s*([^,]+),\s*([^,]+),\s*([^,]+),\s*([^)]+)\)',
-                      r'kernel_read(\1, *(\4), \2, \3)',
-                      c
-                  )
 
               if c != orig:
                   with open(path, "w") as f:
