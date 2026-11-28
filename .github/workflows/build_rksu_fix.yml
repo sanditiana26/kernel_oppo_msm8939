@@ -445,51 +445,7 @@ jobs:
               f.write(exec_c)
           EOF
           
-                    # 1g. Fix 32-bit compat_sys_mount & sepolicy EFAULT (os error 14)
-          python3 << 'EOF'
-          with open("fs/compat.c", "r") as f:
-              fc = f.read()
-
-          target_mount = "COMPAT_SYSCALL_DEFINE5(mount,"
-          if target_mount in fc and "/* ksu_compat_mount_fix */" not in fc:
-              fc = fc.replace(
-                  "retval = copy_mount_options(data, &data_page);",
-                  "/* ksu_compat_mount_fix */ retval = data ? copy_mount_options(data, &data_page) : 0; if (!data) data_page = 0;",
-                  1
-              )
-              with open("fs/compat.c", "w") as f:
-                  f.write(fc)
-
-          with open("KernelSU/kernel/selinux/sepolicy.c", "r") as f:
-              sep = f.read()
-
-          sep = sep.replace("#include <linux/slab.h>", "#include <linux/slab.h>\n#include <linux/compat.h>", 1)
-          old_sep = "if (copy_from_user(&data, arg4, sizeof(data)))"
-          new_sep = """#ifdef CONFIG_COMPAT
-          \tif (is_compat_task()) {
-          \t\tstruct {
-          \t\t\tu32 cmd;
-          \t\t\tu32 subcmd;
-          \t\t\tu32 arg1;
-          \t\t\tu32 arg2;
-          \t\t\tu32 arg3;
-          \t\t} __attribute__((packed)) cdata;
-          \t\tif (copy_from_user(&cdata, arg4, sizeof(cdata)))
-          \t\t\treturn -EFAULT;
-          \t\tdata.cmd = cdata.cmd;
-          \t\tdata.subcmd = cdata.subcmd;
-          \t\tdata.arg1 = compat_ptr(cdata.arg1);
-          \t\tdata.arg2 = compat_ptr(cdata.arg2);
-          \t\tdata.arg3 = compat_ptr(cdata.arg3);
-          \t} else
-          #endif
-          \tif (copy_from_user(&data, arg4, sizeof(data)))"""
-
-          if old_sep in sep:
-              sep = sep.replace(old_sep, new_sep, 1)
-              with open("KernelSU/kernel/selinux/sepolicy.c", "w") as f:
-                  f.write(sep)
-          EOF
+                    
 
 
           # 2. Fix error 'request for member val' pada Kernel 3.10
