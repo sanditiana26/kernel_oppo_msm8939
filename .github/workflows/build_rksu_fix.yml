@@ -50,15 +50,15 @@ jobs:
           # 1b. Pastikan ksu.c mencetak log dmesg saat boot
           sed -i 's/ksu_core_init();/pr_info("KernelSU: kernelsu_init triggered!\\n"); ksu_core_init();/g' KernelSU/kernel/ksu.c
 
-          
-          # 1c. Hook prctl di kernel/sys.c (RKSU v12340 - Mount & SU aktif + tidak mental)
+          # 1c. Hook prctl di kernel/sys.c (RKSU v12340 - Mount, SU & 32-bit Sepolicy Compat)
+          sed -i 's/static int handle_sepolicy/int handle_sepolicy/g' KernelSU/kernel/selinux/sepolicy.c
           python3 << 'EOF'
           import re
 
           with open("kernel/sys.c", "r") as f:
               content = f.read()
 
-          inc_hdr = '#include <linux/compat.h>\n#include "../drivers/kernelsu/ksu.h"\n'
+          inc_hdr = '#include <linux/compat.h>\n#include <asm/uaccess.h>\n#include "../drivers/kernelsu/ksu.h"\n'
           prctl_decl = "SYSCALL_DEFINE5(prctl,"
           content = content.replace(prctl_decl, inc_hdr + prctl_decl, 1)
 
@@ -66,6 +66,7 @@ jobs:
           		extern int ksu_handle_prctl(int option, unsigned long arg2, unsigned long arg3, unsigned long arg4, unsigned long arg5);
           		extern bool ksu_set_app_profile(struct app_profile *profile, bool persist);
           		extern bool ksu_get_app_profile(struct app_profile *profile);
+          		extern int handle_sepolicy(unsigned long arg3, void __user *arg4);
           		extern void escape_to_root(void);
           		u32 ksu_ver = 12340, ksu_ok = 0xdeadbeef, cmd = (u32)arg2;
           		void __user *p3 = is_compat_task() ? compat_ptr((u32)arg3) : (void __user *)arg3;
@@ -81,6 +82,44 @@ jobs:
           			escape_to_root();
           			if (p5) copy_to_user(p5, &ksu_ok, sizeof(ksu_ok));
           			return 0;
+          		}
+          		if (cmd == 4 && p3 && is_compat_task()) {
+          			struct {
+          				u64 cmd;
+          				u32 subcmd;
+          				u32 arg1;
+          				u32 arg2;
+          				u32 arg3;
+          				u32 arg4;
+          				u32 arg5;
+          			} __attribute__((packed)) c_sep;
+          			struct {
+          				u64 cmd;
+          				u64 subcmd;
+          				void __user *arg1;
+          				void __user *arg2;
+          				void __user *arg3;
+          				void __user *arg4;
+          				void __user *arg5;
+          			} k_sep;
+          			mm_segment_t old_fs;
+          			int ret_sep;
+          			if (copy_from_user(&c_sep, p3, sizeof(c_sep)))
+          				return -EFAULT;
+          			k_sep.cmd = c_sep.cmd;
+          			k_sep.subcmd = c_sep.subcmd;
+          			k_sep.arg1 = compat_ptr(c_sep.arg1);
+          			k_sep.arg2 = compat_ptr(c_sep.arg2);
+          			k_sep.arg3 = compat_ptr(c_sep.arg3);
+          			k_sep.arg4 = compat_ptr(c_sep.arg4);
+          			k_sep.arg5 = compat_ptr(c_sep.arg5);
+          			old_fs = get_fs();
+          			set_fs(KERNEL_DS);
+          			ret_sep = handle_sepolicy(k_sep.subcmd, (void __user *)&k_sep.arg1);
+          			set_fs(old_fs);
+          			if (ret_sep == 0 && p5)
+          				copy_to_user(p5, &ksu_ok, sizeof(ksu_ok));
+          			return ret_sep;
           		}
           		if (cmd == 9) return 0;
           		if (cmd == 14 || cmd == 15) {
