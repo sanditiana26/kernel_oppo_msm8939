@@ -570,9 +570,7 @@ jobs:
               f.write(avc)
           print("BERHASIL patch avc_denied() untuk kamera, senter, dan HAL!")
           EOF
-    - name: Verify Kernel Config
-      run: |
-          grep -E "CONFIG_(KSU|BLK_DEV_LOOP|EXT4_FS|TMPFS)" out/.config
+    
 
     - name: Print RKSU app_profile struct
       run: |
@@ -597,7 +595,9 @@ jobs:
       run: |
          chmod +x build.sh
          ./build.sh
-
+    - name: Verify Kernel Config
+      run: |
+          grep -E "CONFIG_(KSU|BLK_DEV_LOOP|EXT4_FS|TMPFS)" out/.config
     - name: Verify KSU Config & Linking
       run: |
           echo "=== Cek .config ==="
